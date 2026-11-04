@@ -962,4 +962,202 @@ function viewGab(){
   <div class="panel small"><div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse"><thead><tr class="mute" style="text-align:left"><th style="padding:4px 6px 4px 0"></th><th style="padding:4px 6px">Brasil</th><th style="padding:4px 0 4px 6px">Aurora</th></tr></thead><tbody>
    ${rows.map(([a,b,c])=>`<tr style="border-top:1px solid var(--line)"><td style="padding:6px 6px 6px 0">${a}</td><td class="mono" style="padding:6px">${b}</td><td class="mono" style="padding:6px 0 6px 6px;color:var(--gold)">${c}</td></tr>`).join('')}</tbody></table></div>
    <p class="mute" style="margin:8px 0 0">Fontes: Tesouro Nacional (2025), Banco Central (dívida), IBGE (Censo 2022 e Projeção 2024). Projeções do IBGE em linha reta entre os marcos publicados. Saúde, educação, defesa e Bolsa Família são aproximações.</p></div>`;
+} // ===== Séries, gráficos, diagrama de causas e mapa interativo =====
+const lerp=(a,b,t)=>Math.round(a+(b-a)*t);
+function initSeries(){
+  const st=demStats(),p=project();
+  S.ser={years:[S.year],pib:[S.pib],growth:[S.growth],debt:[S.debt/S.pib*100],rev:[p.rev/S.pib*100],spend:[primaryPct()],jur:[p.interest/S.pib*100],
+    infl:[S.infl],unemp:[S.unemp],pop:[S.pop],elite:[S.elite],mil:[S.mil],cred:[S.cred],excess:[0],births:[S.births*1000],deaths:[S.deaths*1000],
+    tot:[st.tot],s65:[st.s65*100],bud:{}};
+  CATS.forEach(c=>S.ser.bud[c.k]=[S.budget[c.k]]);S.cy=-1;recSec();
 }
+function recordSeries(rev,prim){
+  const po=S.pib/(1+S.growth/100),st=demStats(),s=S.ser;
+  s.years.push(S.year);s.pib.push(S.pib);s.growth.push(S.growth);s.debt.push(S.debt/S.pib*100);
+  s.rev.push(rev/po*100);s.spend.push(prim/po*100);s.jur.push(S.interest/po*100);
+  s.infl.push(S.infl);s.unemp.push(S.unemp);s.pop.push(S.pop);s.elite.push(S.elite);s.mil.push(S.mil);s.cred.push(S.cred);
+  s.excess.push(S.excess*1000);s.births.push(S.births*1000);s.deaths.push(S.deaths*1000);s.tot.push(st.tot);s.s65.push(st.s65*100);
+  CATS.forEach(c=>s.bud[c.k].push(S.budget[c.k]));
+  regionsYear();recSec();
+}
+// ----- regiões -----
+function regionsYear(){
+  S.regions.forEach(r=>{
+    r.sau+=(S.idx.saude-NEU)*.05+rnd(-.3,.3);r.edu+=(S.idx.educ-NEU)*.05+rnd(-.3,.3);
+    r.sau=clamp(r.sau,0,100);r.edu=clamp(r.edu,0,100);r.hum*=.5;
+  });
+}
+const popRegional=()=>S.regions.reduce((a,r)=>a+r.pop*clamp(S.pop+r.hum+(r.dev-50)*.15+ideoFit(r),0,100),0);
+function regDemo(r){
+  const w=i=>Math.exp(r.beta*(8.5-i)/8.5);let X=0;
+  for(let i=0;i<18;i++)X+=(S.dem.m[i]+S.dem.f[i])*w(i);
+  const c=grp(0,17)*r.pop/X;
+  const m=S.dem.m.map((v,i)=>v*w(i)*c),f=S.dem.f.map((v,i)=>v*w(i)*c);
+  const tot=m.reduce((a,b)=>a+b,0)+f.reduce((a,b)=>a+b,0);
+  let o=0;for(let i=13;i<18;i++)o+=m[i]+f[i];
+  return{m,f,tot,s65:o/tot};
+}
+function miniPyramid(d){
+  const mx=Math.max(...d.m,...d.f)*1.05,sc=70/mx,rh=5.4;let b='';
+  for(let i=0;i<18;i++){const y=104-(i+1)*rh;
+    b+=`<rect x="${80-d.m[i]*sc}" y="${y}" width="${d.m[i]*sc}" height="${rh-.8}" fill="${i>=13?'#7fb6dc':'#4f9bc9'}"/><rect x="${80}" y="${y}" width="${d.f[i]*sc}" height="${rh-.8}" fill="${i>=13?'#f0c46b':'#e3ab3c'}"/>`}
+  return `<svg viewBox="0 0 160 112" width="100%" role="img" aria-label="Pirâmide da região">${b}<text x="2" y="110" font-size="8" fill="#93a9a8" font-family="IBM Plex Mono,monospace">0-4</text><text x="158" y="10" text-anchor="end" font-size="8" fill="#93a9a8" font-family="IBM Plex Mono,monospace">85+</text></svg>`;
+}
+const LAYERS=[['pop','Humor'],['dens','População'],['dev','Riqueza'],['ind','Indústria'],['min','Minérios'],['sau','Saúde'],['edu','Educação']];
+function regionVal(r){
+  const m=S.mapMode;
+  if(m==='pop')return clamp(S.pop+(r.dev-50)*.25+r.hum+(r.sau-60)*.1+ideoFit(r)*2,0,100);
+  if(m==='dens')return r.pop/.42*100;
+  if(m==='dev')return r.dev;if(m==='ind')return r.ind;if(m==='min')return r.min*S.reserves/100;
+  if(m==='sau')return r.sau;return r.edu;
+}
+function regColor(v){
+  const t=clamp(v/100,0,1),m=S.mapMode;
+  if(m==='pop'||m==='sau')return `hsl(${Math.round(t*115)} 42% ${32+t*8}%)`;
+  if(m==='dens')return `rgb(${lerp(24,79,t)},${lerp(52,155,t)},${lerp(62,201,t)})`;
+  if(m==='edu')return `rgb(${lerp(24,168,t)},${lerp(52,111,t)},${lerp(62,208,t)})`;
+  return `rgb(${lerp(24,227,t)},${lerp(52,171,t)},${lerp(62,60,t)})`;
+}
+function investRegion(id,kind){
+  const r=reg(id),cost={infra:15,ind:20,saude:18,educ:14}[kind];if(S.treasury<cost)return;
+  S.treasury-=cost;
+  if(kind==='infra'){r.dev+=7;S.idx.infra+=1.5}
+  else if(kind==='ind'){r.ind+=8;r.dev+=2;S.ind+=.8}
+  else if(kind==='saude'){r.sau+=9;S.idx.saude+=1}
+  else{r.edu+=9;S.idx.educ+=1}
+  reactObra(r,kind);
+  addLog(`Investimento de ${cost} bi em ${{infra:'infraestrutura',ind:'indústria',saude:'hospitais',educ:'escolas'}[kind]} no ${r.nome}.`);clampAll();
+}
+function comicio(id){const r=reg(id);if(S.funds<8)return;S.funds-=8;r.hum+=8;addLog(`Comício no ${r.nome} (-8 do caixa partidário).`)}
+function mapSvg(){
+  const lab=LAYERS.find(l=>l[0]===S.mapMode)[1];let regs='',labels='';
+  S.regions.forEach(r=>{
+    const v=regionVal(r),alert=S.mapMode==='pop'&&v<35;
+    regs+=`<path class="region${S.sel===r.id?' sel':''}${alert?' alert':''}" data-act="selReg" data-arg="${r.id}" d="${r.d}" fill="${regColor(v)}" tabindex="0" role="button" aria-label="${r.nome}: ${lab} ${f0(v)}"><title>${r.nome}: ${lab} ${f0(v)}</title></path>`;
+    labels+=`<text x="${r.lx}" y="${r.ly}" text-anchor="middle" fill="#f4f7f4" font-family="Big Shoulders Display,Arial Narrow,sans-serif" font-weight="800" font-size="15" letter-spacing="1" style="pointer-events:none;text-transform:uppercase">${r.nome}</text><text x="${r.lx}" y="${r.ly+15}" text-anchor="middle" fill="#f4f7f4" font-family="IBM Plex Mono,monospace" font-size="12" style="pointer-events:none">${S.mapMode==='dens'?f1(grp(0,17)*r.pop)+' mi':f0(v)}</text>`;
+  });
+  let grid='';for(let i=0;i<=8;i++)grid+=`<path d="M${i*50},0V420M0,${i*52.5}H400" stroke="#1b3340" stroke-width=".6"/>`;
+  const mine=(x,y)=>`<path d="M${x},${y} l6,-10 6,10z M${x+8},${y} l5,-8 5,8z" fill="#0c171d" opacity=".75"/>`;
+  const rig=(x,y)=>`<g stroke="#0c171d" stroke-width="2" opacity=".8" fill="none"><path d="M${x},${y} l4,-14 4,14 M${x-2},${y-6}h12 M${x-4},${y}h16"/></g>`;
+  const fab=(x,y)=>`<g fill="#0c171d" opacity=".75"><rect x="${x}" y="${y}" width="22" height="9"/><rect x="${x+3}" y="${y-8}" width="4" height="8"/><rect x="${x+12}" y="${y-5}" width="4" height="5"/></g>`;
+  const trigo=(x,y)=>`<g stroke="#0c171d" stroke-width="1.5" opacity=".75"><path d="M${x},${y}v-9M${x+5},${y}v-9M${x+10},${y}v-9"/><circle cx="${x}" cy="${y-10}" r="1.6"/><circle cx="${x+5}" cy="${y-10}" r="1.6"/><circle cx="${x+10}" cy="${y-10}" r="1.6"/></g>`;
+  const ship=(x,y)=>`<g fill="#e9f0ec" opacity=".85"><path d="M${x},${y} h18 l-3,5 h-12z"/><rect x="${x+6}" y="${y-5}" width="5" height="5"/></g>`;
+  const mono="font-family=\"IBM Plex Mono,monospace\"";
+  return `<div class="mapwrap"><svg viewBox="0 0 400 420" role="img" aria-label="Mapa da República de Aurora">
+    <defs><marker id="mk" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto"><path d="M0,0 L7,3.5 L0,7z" fill="#e9f0ec"/></marker></defs>
+    <rect width="400" height="420" fill="#0a1419"/>${grid}
+    <g fill="none" stroke="#173340" stroke-width="1.4"><path d="M0,60 q20,-8 40,0 t40,0"/><path d="M300,380 q20,-8 40,0 t40,0"/><path d="M10,330 q20,-8 40,0 t40,0"/></g>
+    ${regs}
+    <path d="M150,60 Q190,120 190,215 Q230,260 290,258" fill="none" stroke="#0c171d" stroke-width="2" stroke-dasharray="4 4" opacity=".55" style="pointer-events:none"/>
+    <path d="M190,215 Q170,290 178,322" fill="none" stroke="#0c171d" stroke-width="2" stroke-dasharray="4 4" opacity=".55" style="pointer-events:none"/>
+    <g style="pointer-events:none">${mine(80,75)}${mine(150,60)}${rig(335,100)}${rig(345,125)}${fab(262,282)}${fab(300,296)}${trigo(110,215)}${trigo(210,238)}${trigo(130,350)}${trigo(195,365)}${ship(322,330)}${ship(350,205)}${ship(236,396)}</g>
+    <g style="pointer-events:none" stroke="#e9f0ec" stroke-width="1.6" fill="none" stroke-dasharray="3 3" marker-end="url(#mk)"><path d="M352,160 L392,150"/><path d="M386,236 L360,232" /></g>
+    <text x="392" y="140" text-anchor="end" font-size="9" fill="#e9f0ec" ${mono} style="pointer-events:none">EXP ${f0(S.exp)} bi</text>
+    <text x="392" y="250" text-anchor="end" font-size="9" fill="#e9f0ec" ${mono} style="pointer-events:none">IMP ${f0(S.imp)} bi</text>
+    ${labels}
+    <g style="pointer-events:none"><polygon points="190,203 193,211 202,211 195,216 198,225 190,220 182,225 185,216 178,211 187,211" fill="#e3ab3c" stroke="#0c171d" stroke-width="1"/><text x="190" y="238" text-anchor="middle" font-size="9" fill="#f4f7f4" ${mono}>CAPITAL</text></g>
+    <g transform="translate(36,372)" style="pointer-events:none" stroke="#93a9a8" fill="none"><circle r="16"/><path d="M0,-16V16M-16,0H16"/><path d="M0,-16l4,8h-8z" fill="#e3ab3c" stroke="none"/><text y="-20" text-anchor="middle" font-size="9" fill="#93a9a8" stroke="none" ${mono}>N</text></g>
+    </svg></div>`;
+}
+function viewMapa(){
+  const r=S.sel?reg(S.sel):null,dm=r?regDemo(r):null;
+  const sorted=S.regions.slice().sort((a,b)=>regionVal(b)-regionVal(a));
+  return `<div class="hero">${scene(S.regime)}</div>
+  <p class="mute small" style="margin:0"><b style="color:var(--gold)">${R().lema}</b> ${R().desc}</p>
+  <h2>Mapa de Aurora</h2>
+  <div class="pills">${LAYERS.map(([k,n])=>`<button class="${S.mapMode===k?'on':''}" data-act="mapMode" data-arg="${k}">${n}</button>`).join('')}</div>
+  ${mapSvg()}
+  <div class="panel small" style="margin-top:8px">${sorted.map(x=>{const v=regionVal(x);return `<button data-act="selReg" data-arg="${x.id}" style="display:grid;grid-template-columns:96px 1fr 40px;gap:8px;align-items:center;width:100%;border:none;background:${S.sel===x.id?'var(--surf)':'transparent'};padding:6px;min-height:34px"><span style="text-align:left">${x.nome}</span><span class="bar"><span style="display:block;height:100%;width:${clamp(v,0,100)}%;background:${regColor(v)}"></span></span><b class="mono">${f0(v)}</b></button>`}).join('')}
+   <p class="mute" style="margin:6px 0 0">Camada: ${LAYERS.find(l=>l[0]===S.mapMode)[1]}. Regiões vermelhas pulsando estão com humor abaixo de 35 e podem se revoltar.</p></div>
+  ${r?`<div class="panel hi"><h3 style="margin-top:0">${r.nome}</h3><p class="small mute">${r.nota}</p>
+    <div class="grid2"><div>${miniPyramid(dm)}<p class="small mute" style="margin:0">Pirâmide da região</p></div>
+     <div class="small mono"><p style="margin:0">População <b>${f1(dm.tot)} mi</b></p><p style="margin:0">Idosos 65+ <b>${f1(dm.s65*100)}%</b></p><p style="margin:0">Humor <b>${f0(regionVal({...r,}) )}</b></p><p style="margin:0">${f0(r.pibS*100)}% do PIB</p></div></div>
+    ${meter('Riqueza',r.dev)}${meter('Indústria',r.ind,'b')}${meter('Minérios',r.min*S.reserves/100,'r')}${meter('Agro',r.agro,'g')}${meter('Saúde local',r.sau,'g')}${meter('Educação local',r.edu,'b')}
+    <div class="row" style="margin-top:6px"><button data-act="invest" data-arg="${r.id}" data-arg2="infra" ${S.treasury<15?'disabled':''}>Estradas (-15 bi)</button><button data-act="invest" data-arg="${r.id}" data-arg2="ind" ${S.treasury<20?'disabled':''}>Fábricas (-20 bi)</button><button data-act="invest" data-arg="${r.id}" data-arg2="saude" ${S.treasury<18?'disabled':''}>Hospitais (-18 bi)</button><button data-act="invest" data-arg="${r.id}" data-arg2="educ" ${S.treasury<14?'disabled':''}>Escolas (-14 bi)</button><button data-act="comicio" data-arg="${r.id}" ${S.funds<8?'disabled':''}>Comício (-8 caixa)</button></div></div>`
+   :`<p class="small mute">Toque numa região para ver a pirâmide local e investir. Os comícios elevam o humor e pesam na eleição.</p>`}
+  <h2>Apoios</h2><div class="panel">${meter('Povo',S.pop,'g')}${meter('Elite',S.elite,'b')}${meter('Militares',S.mil,'')}${meter('Escândalo',S.scandal,'r')}</div>`;
+}
+// ----- gráficos -----
+const GC={gold:'#e3ab3c',blue:'#4f9bc9',green:'#58b88a',red:'#d95a43',mute:'#93a9a8',white:'#e9f0ec',purple:'#a86fd0'};
+const curY=()=>{const n=S.ser.years.length;return S.cy<0||S.cy>=n?n-1:S.cy};
+function chartFrame(o,body,legend){
+  return `<div class="panel"><div class="row" style="justify-content:space-between"><b>${o.title}</b><span class="small mute">${o.sub||''}</span></div>${body}<div class="small mono" style="display:flex;gap:4px 12px;flex-wrap:wrap">${legend}</div>${o.note?`<p class="small mute" style="margin:6px 0 0">${o.note}</p>`:''}</div>`;
+}
+function chartGeom(o,all){
+  const n=S.ser.years.length,w=360,h=o.h||140,L=38,Rr=8,T=8,B=20,pw=w-L-Rr,ph=h-T-B;
+  let mn=o.min!==undefined?o.min:Math.min(...all),mx=o.max!==undefined?o.max:Math.max(...all);
+  if(mn===mx){mn-=1;mx+=1}const pad=(mx-mn)*.08;if(o.min===undefined)mn-=pad;if(o.max===undefined)mx+=pad;
+  return{n,w,h,L,T,B,pw,ph,mn,mx,X:i=>L+(n===1?pw/2:i/(n-1)*pw),Y:v=>T+ph-(v-mn)/(mx-mn)*ph};
+}
+function chartAxes(g,o){
+  const yrs=S.ser.years;let a='';
+  [0,.5,1].forEach(t=>{const v=g.mn+(g.mx-g.mn)*t,y=g.Y(v);a+=`<line x1="${g.L}" x2="${g.w-8}" y1="${y}" y2="${y}" stroke="#2b4650" stroke-width=".7"/><text x="${g.L-4}" y="${y+3}" text-anchor="end" font-size="9" fill="#93a9a8" font-family="IBM Plex Mono,monospace">${o.fmt(v)}</text>`});
+  a+=`<text x="${g.L}" y="${g.h-6}" font-size="9" fill="#93a9a8" font-family="IBM Plex Mono,monospace">${yrs[0]}</text><text x="${g.w-8}" y="${g.h-6}" text-anchor="end" font-size="9" fill="#93a9a8" font-family="IBM Plex Mono,monospace">${yrs[yrs.length-1]}</text>`;
+  (o.ref||[]).forEach(r=>{if(r.v>=g.mn&&r.v<=g.mx)a+=`<line x1="${g.L}" x2="${g.w-8}" y1="${g.Y(r.v)}" y2="${g.Y(r.v)}" stroke="${GC.red}" stroke-width="1" stroke-dasharray="4 3"/><text x="${g.w-10}" y="${g.Y(r.v)-3}" text-anchor="end" font-size="9" fill="${GC.red}" font-family="IBM Plex Mono,monospace">${r.n}</text>`});
+  return a;
+}
+function chartHits(g){
+  const cy=curY(),step=g.n>1?g.pw/(g.n-1):g.pw;let h=`<line x1="${g.X(cy)}" x2="${g.X(cy)}" y1="${g.T}" y2="${g.T+g.ph}" stroke="#e9f0ec" stroke-width="1" opacity=".7"/>`;
+  for(let i=0;i<g.n;i++)h+=`<rect x="${g.X(i)-step/2}" y="${g.T}" width="${step}" height="${g.ph}" fill="transparent" data-act="cy" data-arg="${i}" style="cursor:pointer"/>`;
+  return h;
+}
+function lineChart(o){
+  const all=[];o.series.forEach(s=>all.push(...s.d));const g=chartGeom(o,all),cy=curY();
+  let body='';
+  o.series.forEach(s=>{
+    if(o.bars){const base=g.Y(Math.max(g.mn,0)),bw=Math.max(3,g.pw/g.n*.7);s.d.forEach((v,i)=>{const y=g.Y(v);body+=`<rect x="${g.X(i)-bw/2}" y="${Math.min(y,base)}" width="${bw}" height="${Math.abs(base-y)||1}" fill="${v<0?GC.red:s.c}" opacity="${i===cy?1:.75}"/>`})}
+    else{body+=`<polyline points="${s.d.map((v,i)=>`${g.X(i)},${g.Y(v)}`).join(' ')}" fill="none" stroke="${s.c}" stroke-width="2.2" ${s.dash?'stroke-dasharray="4 3"':''}/><circle cx="${g.X(cy)}" cy="${g.Y(s.d[cy])}" r="3.5" fill="${s.c}"/>`}
+  });
+  const svg=`<svg viewBox="0 0 ${g.w} ${g.h}" width="100%" role="img" aria-label="${o.title}">${chartAxes(g,o)}${body}${chartHits(g)}</svg>`;
+  return chartFrame(o,svg,o.series.map(s=>`<span style="color:${s.c}">■ ${s.n} ${o.fmt(s.d[cy])}</span>`).join(''));
+}
+function stackChart(o){
+  const s=S.ser,n=s.years.length,cy=curY();
+  const tot=s.years.map((_,i)=>CATS.reduce((a,c)=>a+s.bud[c.k][i],0));
+  const g=chartGeom({...o,min:0,max:Math.max(...tot)*1.08},tot),bw=Math.max(4,g.pw/n*.72);let body='';
+  for(let i=0;i<n;i++){let acc=0;CATS.forEach(c=>{const v=s.bud[c.k][i];const y1=g.Y(acc+v),y0=g.Y(acc);body+=`<rect x="${g.X(i)-bw/2}" y="${y1}" width="${bw}" height="${Math.max(0,y0-y1)}" fill="${c.cor}" opacity="${i===cy?1:.82}"/>`;acc+=v})}
+  const svg=`<svg viewBox="0 0 ${g.w} ${g.h}" width="100%" role="img" aria-label="${o.title}">${chartAxes(g,o)}${body}${chartHits(g)}</svg>`;
+  return chartFrame(o,svg,CATS.map(c=>`<span style="color:${c.cor}">■ ${c.nome.split(' (')[0]} ${f2(s.bud[c.k][cy])}%</span>`).join(''));
+}
+function viewGraf(){
+  const s=S.ser,n=s.years.length,cy=curY(),pc=v=>f1(v)+'%',bi=v=>f0(v);
+  return `<h2>Como tudo se liga</h2>${fluxo()}
+  <h2>Gráficos</h2>
+  <div class="panel row" style="justify-content:space-between"><span>Ano selecionado: <b class="mono" style="color:var(--gold)">${s.years[cy]}</b></span>
+   <span class="row"><button data-act="cyStep" data-arg="-1" ${cy<=0?'disabled':''} aria-label="Ano anterior">◀</button><button data-act="cyStep" data-arg="1" ${cy>=n-1?'disabled':''} aria-label="Próximo ano">▶</button><button data-act="cyLast">Hoje</button></span></div>
+  <p class="small mute" style="margin:0 0 6px">Toque em qualquer gráfico para ver os valores daquele ano em todos eles.</p>
+  ${lineChart({title:'PIB',sub:'bilhões, valores reais',fmt:bi,series:[{n:'PIB',c:GC.gold,d:s.pib}]})}
+  ${lineChart({title:'Crescimento do PIB',sub:'% ao ano',fmt:pc,bars:true,series:[{n:'Crescimento',c:GC.green,d:s.growth}],h:110})}
+  ${lineChart({title:'Receita, despesa e juros',sub:'% do PIB',fmt:pc,series:[{n:'Receita',c:GC.green,d:s.rev},{n:'Despesa primária',c:GC.gold,d:s.spend},{n:'Juros',c:GC.mute,d:s.jur,dash:1}],note:'Quando a receita fica abaixo da despesa mais os juros, a dívida cresce.'})}
+  ${lineChart({title:'Dívida bruta',sub:'% do PIB',fmt:v=>f0(v)+'%',series:[{n:'Dívida',c:GC.red,d:s.debt}],ref:[{v:100,n:'100%'}],note:'Brasil, dez/2025: 78,7%.'})}
+  ${stackChart({title:'Para onde vai o orçamento',sub:'% do PIB, por área',fmt:v=>f1(v)+'%',h:150})}
+  ${chartsSetores()}
+  ${lineChart({title:'Credibilidade do país',sub:'0 a 100',fmt:v=>f0(v),min:0,max:100,series:[{n:'Credibilidade',c:GC.blue,d:s.cred}],ref:[{v:45,n:'alerta'}]})}
+  ${lineChart({title:'Inflação e desemprego',sub:'%',fmt:pc,series:[{n:'Inflação',c:GC.red,d:s.infl},{n:'Desemprego',c:GC.blue,d:s.unemp}]})}
+  ${lineChart({title:'Apoios',sub:'0 a 100',fmt:v=>f0(v),min:0,max:100,series:[{n:'Povo',c:GC.green,d:s.pop},{n:'Elite',c:GC.blue,d:s.elite},{n:'Militares',c:GC.mute,d:s.mil}],ref:[{v:20,n:'risco'}]})}
+  ${lineChart({title:'Nascimentos e mortes',sub:'mil por ano',fmt:v=>f0(v),series:[{n:'Nascimentos',c:GC.green,d:s.births},{n:'Mortes',c:GC.red,d:s.deaths}],note:'Quando as mortes passam dos nascimentos, a população começa a encolher.'})}
+  ${lineChart({title:'Mortes por falta de serviços',sub:'mil por ano',fmt:v=>f0(v),bars:true,min:0,series:[{n:'Excesso',c:GC.red,d:s.excess}],h:110,note:'Mortes acima do esperado por cortes em saúde, assistência, previdência e segurança.'})}
+  ${lineChart({title:'Idosos (65+)',sub:'% da população',fmt:pc,series:[{n:'Idosos',c:GC.gold,d:s.s65}]})}`;
+}
+function fluxo(){
+  const st=demStats(),over=primBi()-S.spendLimit,rp=ratioOf('previd');
+  const lvl=(g,w)=>g?'#58b88a':w?'#e3ab3c':'#d95a43';
+  const N={
+    dem:{c:[0,0],t:'Demografia',v:`${f1(st.s65*100)}% idosos`,col:st.s65>.13?'#e3ab3c':'#58b88a',go:'povo'},
+    dman:{c:[1,0],t:'Demandas',v:`Previd. ${f2(need('previd'))}%`,col:lvl(rp>=.97,rp>=.8),go:'orc'},
+    orc:{c:[2,0],t:'Orçamento',v:`${f2(primaryPct())}% do PIB`,col:lvl(over<=S.spendLimit*.005,over<S.spendLimit*.03),go:'orc'},
+    serv:{c:[0,1],t:'Serviços',v:`Saúde ${f0(S.idx.saude)}`,col:lvl(S.idx.saude>55&&S.idx.educ>55,S.idx.saude>45),go:'orc'},
+    eco:{c:[1,1],t:'Economia',v:`PIB ${sg(S.growth)}%`,col:lvl(S.growth>1.5,S.growth>0),go:'eco'},
+    arc:{c:[2,1],t:'Arcabouço',v:`Cred. ${f0(S.cred)}`,col:lvl(S.cred>60,S.cred>40),go:'orc'},
+    povo:{c:[0,2],t:'Mortes evitáveis',v:`${f0(S.excess*1000)} mil`,col:lvl(S.excess<.02,S.excess<.08),go:'povo'},
+    pop:{c:[1,2],t:'Popularidade',v:`${f0(S.pop)}%`,col:lvl(S.pop>50,S.pop>30),go:'mapa'},
+    cong:{c:[2,2],t:'Congresso',v:`Base ${coalSeats()}`,col:lvl(coalSeats()>=R().need,coalSeats()>=R().need-10),go:'cong'}
+  };
+  const cx=k=>60+N[k].c[0]*130,cy=k=>34+N[k].c[1]*104;
+  const E=[['dem','dman','envelhece'],['dem','eco','mão de obra'],['dman','orc','pedidos'],['orc','serv','verba'],['orc','arc','limite'],['serv','povo','mortes'],['serv','eco','produção'],['eco','arc','receita'],['povo','pop','revolta'],['eco','pop','emprego'],['pop','cong','votos'],['cong','arc','PEC']];
+  const ept=(a,b)=>{const dx=cx(b)-cx(a),dy=cy(b)-cy(a),t=Math.min(54/Math.abs(dx||1e-9),24/Math.abs(dy||1e-9));return[cx(a)+dx*t,cy(a)+dy*t]};
+  let edges='';
+  E.forEach(([a,b,l])=>{const p=ept(a,b),q=ept(b,a);edges+=`<line x1="${p[0]}" y1="${p[1]}" x2="${q[0]}" y2="${q[1]}" stroke="#6f8a90" stroke-width="1.4" marker-end="url(#ah)"/><text x="${(p[0]+q[0])/2}" y="${(p[1]+q[1])/2+3}" text-anchor="middle" font-size="8.5" fill="#93a9a8" paint-order="stroke" stroke="#0c171d" stroke-width="3" font-family="IBM Plex Mono,monospace">${l}</text>`});
+  let nodes='';
+  Object.keys(N).forEach(k=>{const n=N[k],x=cx(k)-52,y=cy(k)-24;
+    nodes+=`<g data-act="tab" data-arg="${n.go}" style="cursor:pointer" role="button" tabindex="0" aria-label="${n.t}: ${n.v}"><rect x="${x}" y="${y}" width="104" height="48" rx="7" fill="#12232b" stroke="${n.c
