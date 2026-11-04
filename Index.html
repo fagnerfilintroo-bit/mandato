@@ -116,4 +116,125 @@ const sg=(n,d=1)=>(n>=0?'+':'')+(d?f1(n):f0(n));
 // ===== Regimes =====
 const REGIMES={
   parlamentarismo:{nome:'Parlamentarismo',lema:'Governa quem tem maioria.',desc:'Você é o primeiro-ministro. Precisa de uma coalizão de 51 cadeiras. Eleições a cada 4 anos e voto de desconfiança.',elec:4,need:51,decree:false,veto:true,
-    regras:['Eleição de NPCs a cada 4 anos','Coalizão precisa de 51+ cadeiras','Sem maioria: voto de desconfiança e eleição antecipada']},
+    regras:['Eleição de NPCs a cada 4 anos','Coalizão precisa de 51+ cadeiras','Sem maioria: voto de desconfiança e eleição antecipada']},ditadura:{nome:'Ditadura',lema:'Ordem acima de tudo.',desc:'Sem eleições. Decretos passam sempre, mas o povo e os militares podem derrubá-lo.',elec:0,need:51,decree:true,veto:false,
+    regras:['Decretos sempre passam (custam popularidade)','Sem eleições','Risco de golpe se os militares ficarem insatisfeitos','Revolta se a popularidade desabar']},
+  monarquia:{nome:'Monarquia',lema:'O trono é a lei.',desc:'Você é o monarca. O Conselho de Nobres vota, mas você pode decretar ao custo da lealdade da elite. A sucessão pesa.',elec:0,need:51,decree:true,veto:true,
+    regras:['Decreto real custa lealdade da nobreza','O monarca envelhece: sucessão com herdeiro de qualidade aleatória','Sem eleições']},
+  aristocracia:{nome:'Aristocracia',lema:'Poucas famílias, muito poder.',desc:'As grandes casas dominam o Senado. Projetos exigem 60% das cadeiras. A cada 4 anos, as casas redistribuem o poder por riqueza.',elec:4,need:60,decree:false,veto:true,
+    regras:['Aprovação com 60% das cadeiras','Redistribuição das casas a cada 4 anos','Elite insatisfeita derruba o governo']}
+};
+
+// ===== Estatais =====
+const mkCompanies=()=>[
+  {id:'petro',nome:'PetroAurora',setor:'Petróleo e gás',valor:140,lucro:9,priv:false},
+  {id:'ferro',nome:'Ferrovia Nacional',setor:'Transporte',valor:60,lucro:2,priv:false},
+  {id:'banco',nome:'Banco do Povo',setor:'Finanças',valor:90,lucro:6,priv:false},
+  {id:'energ',nome:'Energia Aurora',setor:'Energia elétrica',valor:110,lucro:7,priv:false},
+  {id:'vale',nome:'Mineradora Vale-Ouro',setor:'Mineração',valor:80,lucro:6,priv:false}
+];
+
+// ===== Regiões =====
+const mkRegions=()=>[
+  {id:'norte',sau:52,edu:55,beta:0.35,hum:0,nome:'Norte',pop:.09,pibS:.07,ind:20,min:85,agro:30,dev:35,nota:'Floresta, ferro e ouro. Pouca estrada.',
+   d:'M60,40 L220,30 L250,110 L200,170 L90,160 L40,100 Z',lx:135,ly:100},
+  {id:'nordeste',sau:55,edu:56,beta:0.15,hum:0,nome:'Nordeste',pop:.27,pibS:.14,ind:30,min:40,agro:55,dev:38,nota:'Costa de petróleo, sertão seco e muita gente.',
+   d:'M220,30 L340,60 L360,140 L300,190 L250,170 L200,170 L250,110 Z',lx:295,ly:115},
+  {id:'centro',sau:62,edu:62,beta:0.1,hum:0,nome:'Centro-Oeste',pop:.08,pibS:.10,ind:25,min:45,agro:90,dev:50,nota:'Celeiro do país e sede da capital.',
+   d:'M90,160 L200,170 L250,170 L240,250 L130,260 L70,220 Z',lx:150,ly:222},
+  {id:'sudeste',sau:72,edu:70,beta:-0.12,hum:0,nome:'Sudeste',pop:.42,pibS:.55,ind:85,min:55,agro:40,dev:72,nota:'Fábricas, portos, bancos e a maior população.',
+   d:'M240,250 L250,170 L300,190 L340,250 L320,320 L250,310 Z',lx:290,ly:258},
+  {id:'sul',sau:70,edu:68,beta:-0.15,hum:0,nome:'Sul',pop:.14,pibS:.14,ind:60,min:10,agro:80,dev:66,nota:'Indústria média e agricultura familiar forte.',
+   d:'M130,260 L240,250 L250,310 L220,390 L150,380 L110,320 Z',lx:178,ly:322}
+];
+
+// ===== Partidos =====
+const RIVAIS=[
+  {id:'pta',nome:'Partido Trabalhista de Aurora',sigla:'PTA',cor:'#d9534f',ideo:-70,seats:24,ganancia:30,forma:'estrela',lema:'Estado forte, povo protegido.'},
+  {id:'fv',nome:'Frente Verde',sigla:'FV',cor:'#4cae7a',ideo:-30,seats:14,ganancia:25,forma:'folha',lema:'Floresta de pé, futuro de pé.'},
+  {id:'cd',nome:'Centrão Democrático',sigla:'CD',cor:'#d8a63a',ideo:5,seats:22,ganancia:85,forma:'faixa',lema:'Governo é quem governa.'},
+  {id:'al',nome:'Aliança Liberal',sigla:'AL',cor:'#4f9bc9',ideo:60,seats:18,ganancia:55,forma:'circulo',lema:'Menos imposto, mais mercado.'},
+  {id:'mon',nome:'Movimento Ordem e Nação',sigla:'MON',cor:'#8a8f98',ideo:85,seats:10,ganancia:40,forma:'bloco',lema:'Ordem, disciplina, pátria.'}
+];
+const DEMANDAS=[
+  {t:'um ministério',custo:12,efeito:()=>{}},
+  {t:'obras na base eleitoral (emendas)',custo:14,efeito:()=>{S.ind=clamp(S.ind+.3,0,100)}},
+  {t:'perdão de dívidas de aliados',custo:10,efeito:()=>{S.scandal=clamp(S.scandal+4,0,100)}},
+  {t:'cargos em estatais',custo:12,efeito:()=>{S.scandal=clamp(S.scandal+3,0,100)}},
+  {t:'redução de impostos para o setor deles',custo:10,efeito:()=>{S.elite=clamp(S.elite+2,0,100)}},
+  {t:'verba para a campanha do partido',custo:16,efeito:()=>{}}
+];
+
+// ===== Projetos de lei =====
+const LEIS=[
+  {id:'trib',nome:'Reforma tributária progressiva',ideo:-50,desc:'Sobe o imposto sobre os mais ricos. Arrecada mais e desagrada a elite.',
+   ef:()=>{taxShift(5);S.elite-=7;S.pop+=2}},
+  {id:'priv',nome:'Privatização da Ferrovia Nacional',ideo:60,desc:'Vende a ferrovia. Caixa agora, menos receita depois.',
+   ef:()=>{const c=S.companies.find(c=>c.id==='ferro');if(c&&!c.priv)privatizar('ferro',true);else{S.treasury+=10}}},
+  {id:'piso',nome:'Piso nacional do salário',ideo:-60,desc:'Aumenta renda e consumo. Pressiona preços e empregos.',
+   ef:()=>{S.pop+=6;S.infl+=1;S.unemp+=.5;S.elite-=4}},
+  {id:'seg',nome:'Lei de Segurança Máxima',ideo:55,desc:'Endurece penas e dá poder às forças de segurança.',
+   ef:()=>{S.idx.seg+=9;S.mil+=8;S.pop-=2}},
+  {id:'subs',nome:'Subsídio à indústria nacional',ideo:10,desc:'Gasta 25 bi para fortalecer as fábricas.',
+   ef:()=>{S.ind=clamp(S.ind+6,0,100);S.treasury-=25;S.elite+=3}},
+  {id:'roy',nome:'Mais royalties da mineração',ideo:-30,desc:'O Estado fica com fatia maior das minas.',
+   ef:()=>{S.royalty+=.1;S.elite-=4}},
+  {id:'bc',nome:'Fim da autonomia do Banco Central',ideo:-45,desc:'O governo volta a mandar nos juros. Pode baixar a Selic, mas o mercado e a inflação reagem.',
+   ef:()=>{S.bcAuto=false;S.elite-=6;S.cred=clamp((S.cred??70)-6,0,100);S.pop+=1}},
+  {id:'amb',nome:'Marco ambiental',ideo:-40,desc:'Limita a mineração predatória e protege biomas.',
+   ef:()=>{S.idx.amb+=10;S.ind-=1.5;S.pop+=3;S.mining=Math.min(S.mining,70)}},
+  {id:'anis',nome:'Anistia fiscal',ideo:45,desc:'Perdoa dívidas de grandes empresas. Entra caixa, sai moral.',
+   ef:()=>{S.treasury+=30;S.scandal+=6;S.pop-=3;S.elite+=3}},
+  {id:'edu',nome:'Educação em tempo integral',ideo:-20,desc:'Gasta 20 bi. Efeito lento e duradouro.',
+   ef:()=>{S.idx.educ+=9;S.treasury-=20;S.pop+=3}},
+  {id:'emp',nome:'Corte de impostos às empresas',ideo:70,desc:'Reduz a carga de 4 pontos. A elite agradece.',
+   ef:()=>{taxShift(-4);S.elite+=7}},
+  {id:'voto',nome:'Reforma política: voto distrital',ideo:0,desc:'Mexe nas regras eleitorais e reduz o clima de escândalo.',
+   ef:()=>{S.scandal=Math.max(0,S.scandal-12);S.pop+=2}}
+];
+
+// ===== Políticas públicas =====
+const POLS=[
+  {k:'saude',nome:'Saúde',d:'Hospitais e vacinas. Popularidade e produtividade.'},
+  {k:'educ',nome:'Educação',d:'Cresce devagar, mas sustenta o PIB e a indústria.'},
+  {k:'seg',nome:'Segurança',d:'Polícia e forças armadas. Agrada militares.'},
+  {k:'infra',nome:'Infraestrutura',d:'Estradas, portos e energia. Puxa PIB e regiões.'},
+  {k:'ind',nome:'Política industrial',d:'Crédito e incentivo a fábricas.'},
+  {k:'amb',nome:'Meio ambiente',d:'Reduz o desgaste da mineração.'},
+  {k:'social',nome:'Assistência social',d:'Renda mínima. Popularidade alta, custo alto.'}
+];
+const NIVEIS=['Cortado','Baixo','Médio','Alto'];
+
+// ===== Eventos =====
+const EVENTOS=[
+  {id:'seca',ic:'sol',t:'Seca no Nordeste',txt:'O sertão rachou. Famílias deixam as cidades e a safra quebrou.',
+   op:[{t:'Socorrer com carros-pipa e crédito (-15 bi)',f:()=>{S.treasury-=15;S.pop+=3;reg('nordeste').dev+=2}},
+       {t:'Esperar a chuva voltar',f:()=>{S.pop-=6;S.growthShock-=.6;reg('nordeste').dev-=4}}]},
+  {id:'boom',ic:'moeda',t:'Boom das commodities',txt:'O preço do minério dispara no mercado mundial.',
+   op:[{t:'Aumentar a extração em 15 pontos',f:()=>{S.mining=clamp(S.mining+15,0,100);S.growthShock+=.8}},
+       {t:'Poupar a receita extra (+25 bi)',f:()=>{S.treasury+=25;S.elite+=2}}]},
+  {id:'greve',ic:'punho',t:'Greve geral',txt:'Sindicatos param fábricas e transportes exigindo reajuste.',
+   op:[{t:'Negociar reajuste',f:()=>{S.infl+=1;S.pop+=3;S.elite-=3;ideoAct(-2,'Negociou com os sindicatos')}},
+       {t:'Reprimir com a polícia',f:()=>{S.mil+=6;S.pop-=8;S.scandal+=4;ideoAct(3,'Reprimiu a greve geral',6)}}]},
+  {id:'crise',ic:'queda',t:'Crise financeira externa',txt:'Investidores fogem dos emergentes. O câmbio sobe.',
+   op:[{t:'Cortar gastos',f:()=>{S.pop-=4;S.growthShock-=.6;S.debt-=12;ideoAct(3,'Cortou gastos na crise')}},
+       {t:'Imprimir moeda',f:()=>{S.infl+=3;S.pop+=2;S.treasury+=20}}]},
+  {id:'oleo',ic:'gota',t:'Petróleo no pré-sal',txt:'Uma jazida enorme foi descoberta no litoral do Nordeste.',
+   op:[{t:'Explorar pela estatal (-20 bi)',f:()=>{S.treasury-=20;const c=S.companies.find(c=>c.id==='petro');if(c&&!c.priv)c.lucro+=6;else S.treasury+=5}},
+       {t:'Leiloar para empresas privadas (+40 bi)',f:()=>{S.treasury+=40;S.elite+=4;S.pop-=2;ideoAct(3,'Leiloou o pré-sal')}}]},
+  {id:'escand',ic:'papel',t:'Escândalo vaza na imprensa',txt:'Um ministro foi flagrado com dinheiro suspeito.',
+   op:[{t:'Demitir e abrir investigação',f:()=>{S.pop+=2;S.elite-=2;S.scandal=Math.max(0,S.scandal-8)}},
+       {t:'Abafar o caso',f:()=>{S.scandal+=12;S.elite+=2}}]},
+  {id:'pand',ic:'cruz',t:'Surto de doença infecciosa',txt:'Hospitais lotados e fronteiras pressionadas.',
+   op:[{t:'Investir pesado na saúde (-30 bi)',f:()=>{S.treasury-=30;S.idx.saude+=10;S.pop+=2}},
+       {t:'Minimizar o problema',f:()=>{S.pop-=6;S.growthShock-=1}}]},
+  {id:'prot',ic:'livro',t:'Protesto estudantil',txt:'Universidades paradas pedem mais verbas.',
+   op:[{t:'Liberar verbas (-15 bi)',f:()=>{S.treasury-=15;S.idx.educ+=6;S.pop+=3;ideoAct(-2,'Atendeu os estudantes')}},
+       {t:'Ignorar os protestos',f:()=>{S.pop-=3}}]}
+];
+// ===== Orçamento e demografia (calibrados no Brasil) =====
+// Fontes: despesa primária do Governo Central 2025 = 18,8% do PIB, receita líquida 18,3% (Tesouro Nacional);
+// RGPS ~8,1%, pessoal ~3,2%, BPC ~1,0%, abono e seguro-desemprego ~0,7%, investimento ~0,7%.
+// Saúde, educação, defesa e Bolsa Família são aproximações. Pirâmide: Censo 2022 (0-14: 19,8%, 15-64: 69,3%, 65+: 10,9%).
+const NEU=67;
+const CATS=[
+  {k:'previd',nome:'Previdência (aposentadorias e pensões)',base:8.1,max:14,cor:'#e3ab3c',idx:null,real:'Real: cerca de 8,1% do PIB (INSS/RGPS).
