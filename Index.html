@@ -338,3 +338,215 @@ function setBudget(k,v){
   if(S.teto&&primaryPct()-old+v>S.teto+.001){S.toast=`Teto de gastos: despesa primária limitada a ${f1(S.teto)}% do PIB.`;return}
   S.budget[k]=v;
 }
+// ===== Estado e motor =====
+let S=null;
+const reg=id=>S.regions.find(r=>r.id===id);
+const partyById=id=>S.parties.find(p=>p.id===id);
+const R=()=>REGIMES[S.regime];
+const addLog=(t,c='')=>{S.log.unshift({y:S.year,t,c});if(S.log.length>80)S.log.pop()};
+const inCoal=p=>S.coalition.includes(p.id);
+const coalSeats=()=>S.parties.filter(inCoal).reduce((a,p)=>a+p.seats,0);
+const policyTarget=[10,40,65,85];
+
+function newGame(regime,pt){
+  const player={id:'p0',nome:pt.nome,sigla:pt.sigla,cor:pt.cor,ideo:pt.ideo,seats:12,ganancia:0,forma:pt.forma,lema:'Fundado em 2026.',rel:100,bought:false,noise:{},dem:0,player:true};
+  const rivals=RIVAIS.map(r=>({...r,rel:clamp(62-Math.abs(r.ideo-pt.ideo)*.3,15,60),bought:false,noise:{},dem:Math.floor(Math.random()*DEMANDAS.length)}));
+  S={year:2026,regime,party:player,parties:[player,...rivals],companies:mkCompanies(),regions:mkRegions(),
+    treasury:80,funds:40,pib:1000,growth:2,growthShock:0,debt:760,infl:4,unemp:8,ind:40,tariff:12,mining:40,reserves:100,royalty:.15,
+    pop:55,elite:50,mil:50,scandal:0,lowPop:0,camp:0,
+    budget:{},idx:{},floors:{saude:1.6,educ:.8},reform:{prev:0,adm:0,natal:1,imig:0},term:0,teto:0,cool:{},pecDraft:'',pec:null,pecYear:0,toast:'',
+    bills:[],coalition:[],log:[],recent:[],lastElection:2026,monarch:{age:48,q:50},hist:[{y:2026,r:regime}],pibHist:[1000],popHist:[55],
+    modals:[],over:false,exp:0,imp:0,tab:'mapa',mapMode:'pop',sel:null,decrees:0};
+  CATS.forEach(c=>S.budget[c.k]=c.base);IDXKEYS.forEach(k=>S.idx[k]=NEU);
+  initTrade();trade();initTax();initIdeo();trade();initGroups();S.revolta=0;S.repr=0;initUFs();initTime();initBC();initSTF();
+  initDemography();initCabinet();
+  if(pt.plat.includes('estado'))S.budget.assist+=.3;
+  if(pt.plat.includes('mercado')){S.elite+=8;taxShift(-3)}
+  if(pt.plat.includes('ambiente'))S.idx.amb=NEU+8;
+  if(pt.plat.includes('ordem')){S.idx.seg=NEU+6;S.mil+=6}
+  if(pt.plat.includes('educ'))S.idx.educ=NEU+8;
+  if(regime==='ditadura'){S.mil=72;S.pop=42;S.elite=55}
+  if(regime==='monarquia'){S.elite=62;S.pop=50}
+  if(regime==='aristocracia'){S.elite=72;S.pop=42;taxShift(-5)}
+  S.pop=clamp(S.pop,0,100);
+  trade();autoCoalition();drawBills();S.revPrev=project().rev/1.02;initSeries();
+  addLog(`Você assume o governo de Aurora sob o regime ${R().nome.toLowerCase()}. Seu partido, o ${player.sigla}, tem 12 das 100 cadeiras.`,'e');
+}
+function autoCoalition(){
+  const pl=S.parties[0];S.coalition=[pl.id];
+  const rest=S.parties.slice(1).sort((a,b)=>Math.abs(a.ideo-pl.ideo)-Math.abs(b.ideo-pl.ideo));
+  for(const p of rest){if(coalSeats()>=51)break;S.coalition.push(p.id)}
+}
+function drawBills(){
+  const pool=LEIS.filter(l=>!S.recent.includes(l.id));
+  const a=[];while(a.length<2&&pool.length){const l=pool.splice(Math.floor(Math.random()*pool.length),1)[0];a.push(l)}
+  S.bills=a.map(l=>({id:l.id,status:'pend'}));
+  S.recent=[...S.recent,...a.map(l=>l.id)].slice(-6);
+  S.parties.forEach(p=>{p.bought=false;S.bills.forEach(b=>{p.noise[b.id]=rnd(-9,9)})});
+}
+const lawOf=id=>LEIS.find(l=>l.id===id);
+function score(p,b){
+  if(p.player)return 100;
+  const ideo=b.ideo!==undefined?b.ideo:lawOf(b.id).ideo;
+  const pen=b.pec&&S.pec?(S.pec.provs.length-1)*3:0;
+  return 55-Math.abs(ideo-p.ideo)*.45+(p.rel-50)*.3+(inCoal(p)?12+(R().disc||0):0)+(p.bought?60:0)+(p.noise[b.id]||0)-pen;
+}
+const forecast=b=>{let y=0,u=0;S.parties.forEach(p=>{const s=score(p,b);if(s>=58)y+=p.seats;else if(s>=42)u+=p.seats});return{y,u}};
+function clampAll(){
+  ['pop','elite','mil','scandal'].forEach(k=>S[k]=clamp(S[k],0,100));
+  Object.keys(S.idx).forEach(k=>S.idx[k]=clamp(S.idx[k],0,100));
+  S.infl=clamp(S.infl,.5,40);S.unemp=clamp(S.unemp,3,25);S.ind=clamp(S.ind,0,100);S.funds=Math.max(0,S.funds);
+  S.regions.forEach(r=>{r.dev=clamp(r.dev,0,100);r.ind=clamp(r.ind,0,100)});
+}
+function modal(m){S.modals.push(m)}
+
+// ===== Ações do jogador =====
+function privatizar(id,silent){
+  const c=S.companies.find(c=>c.id===id);if(!c||c.priv)return;
+  c.priv=true;S.treasury+=c.valor;S.elite+=3;S.pop-=(id==='energ'||id==='banco')?4:2;
+  addLog(`${c.nome} foi privatizada por ${f0(c.valor)} bi.`,silent?'':'e');if(!silent)reactPriv(c,true);if(!silent)ideoAct((id==='energ'||id==='banco')?5:4,'Privatizou '+c.nome);clampAll();
+}
+function estatizar(id){
+  const c=S.companies.find(c=>c.id===id);if(!c||!c.priv)return;
+  const cost=Math.round(c.valor*1.3);if(S.treasury<cost)return;
+  S.treasury-=cost;c.priv=false;S.elite-=4;S.pop+=2;addLog(`${c.nome} voltou ao Estado por ${f0(cost)} bi.`);reactPriv(c,false);ideoAct(-4,'Estatizou '+c.nome);clampAll();
+}
+function buy(pid){
+  const p=partyById(pid);const cost=Math.round(p.seats*(1.1+p.ganancia/50));
+  if(S.funds<cost||p.bought)return;
+  S.funds-=cost;p.bought=true;S.scandal+=p.seats*.45;p.rel=clamp(p.rel+6,0,100);
+  addLog(`Você pagou ${f0(cost)} bi do caixa partidário ao ${p.sigla} por ${p.seats} votos.`,'bad');ideoAct(-Math.sign(S.party.ideo)*1,'Fisiologismo: comprou votos');clampAll();
+}
+function demand(pid){
+  const p=partyById(pid);const d=DEMANDAS[p.dem];
+  if(S.treasury<d.custo)return;
+  S.treasury-=d.custo;p.rel=clamp(p.rel+22,0,100);d.efeito();
+  addLog(`Você atendeu o ${p.sigla}: ${d.t} (${d.custo} bi).`);
+  p.dem=(p.dem+1+Math.floor(Math.random()*3))%DEMANDAS.length;clampAll();
+}
+function leaveBill(b,l,txt){b.status=txt}
+function vote(id){
+  const b=S.bills.find(b=>b.id===id);if(!b||b.status!=='pend')return;
+  const l=lawOf(id);let y=0;const votos=[];
+  S.parties.forEach(p=>{const ok=score(p,b)>=50;if(ok)y+=p.seats;votos.push([p,ok])});
+  b.yes=y;b.votos=votos;
+  if(y>=R().need){b.status='aprovado';addLog(`"${l.nome}" foi aprovado com ${y} votos. Aguarda sua decisão.`,'good')}
+  else{b.status='rejeitado';addLog(`"${l.nome}" foi rejeitado: ${y} votos, faltaram ${R().need-y}.`,'bad');S.pop-=0}
+  S.parties.forEach(p=>p.bought=p.bought);
+}
+function sign(id){
+  const b=S.bills.find(b=>b.id===id);if(!b||b.status!=='aprovado')return;
+  const _d=numSnap();lawOf(id).ef();stfChallenge(id,numDiff(_d));reactLaw(lawOf(id),true);b.status='sancionado';addLog(`Você sancionou "${lawOf(id).nome}".`,'good');ideoAct(clamp(lawOf(id).ideo*.05,-4,4),'Sancionou "'+lawOf(id).nome+'"');clampAll();
+}
+function veto(id){
+  const b=S.bills.find(b=>b.id===id);if(!b||b.status!=='aprovado')return;
+  if(b.yes>=(R().ovr||67)&&R().veto){lawOf(id).ef();b.status='sancionado';addLog(`Veto derrubado: "${lawOf(id).nome}" virou lei com ${b.yes} votos.`,'bad');S.pop-=1;
+    b.votos.forEach(([p,ok])=>{if(ok)p.rel=clamp(p.rel-6,0,100)})}
+  else{reactLaw(lawOf(id),false);b.status='vetado';addLog(`Você vetou "${lawOf(id).nome}".`);ideoAct(-clamp(lawOf(id).ideo*.03,-2.5,2.5),'Vetou "'+lawOf(id).nome+'"');b.votos.forEach(([p,ok])=>{if(ok)p.rel=clamp(p.rel-5,0,100)})}
+  clampAll();
+}
+function decree(id){
+  if(S.rg&&S.rg.regen>0){S.toast='Durante a regência decide o Conselho, não o rei.';return}
+  const b=S.bills.find(b=>b.id===id);if(!b||!(b.status==='pend'||b.status==='rejeitado'))return;
+  if(S.regime==='ditadura'){S.pop-=2.5;S.mil+=1}
+  else if(S.regime==='monarquia'){S.elite-=6}
+  else return;
+  lawOf(id).ef();b.status='sancionado';S.decrees++;addLog(`Decreto: "${lawOf(id).nome}" entrou em vigor sem votação.`,'bad');ideoAct(clamp(lawOf(id).ideo*.05,-4,4),'Decretou "'+lawOf(id).nome+'"',8);clampAll();
+}
+function toggleCoal(pid){
+  if(pid==='p0')return;
+  const i=S.coalition.indexOf(pid);
+  if(i>=0)S.coalition.splice(i,1);
+  else{const p=partyById(pid);if(p.rel<30){addLog(`O ${p.sigla} recusou entrar na base: relação muito baixa.`,'bad');return}S.coalition.push(pid)}
+}
+function diverge(){if(S.treasury<20)return;S.treasury-=20;S.funds+=18;S.scandal+=8;addLog('Você desviou 20 bi do Tesouro por contratos superfaturados e abasteceu o caixa partidário com 18 bi.','bad');clampAll()}
+function campaign(){if(S.funds<15)return;S.funds-=15;S.camp++;addLog('Campanha de rua financiada (15 bi). Vale na próxima eleição.')}
+function amortize(){if(S.treasury<20||S.debt<20)return;S.treasury-=20;S.debt-=20}
+function canChange(){return{legal:coalSeats()>=67||S.elite>=70||S.pop>=70,force:S.mil>=55}}
+function changeRegime(key,how){
+  if(key===S.regime)return;const c=canChange();
+  if(how==='legal'&&!c.legal)return;if(how==='force'&&!c.force)return;
+  const old=R().nome;
+  if(how==='force'){S.pop-=12;S.elite-=8;S.mil+=5;S.auth=clamp(S.auth+15,0,100)}
+  applyRegime(key);
+  addLog(`${how==='force'?'Imposição':'Reforma constitucional'}: de ${old} para ${REGIMES[key].nome}.`,'e');
+  modal({kind:'regime',key,titulo:`Novo regime: ${REGIMES[key].nome}`,txt:`${how==='force'?'Com apoio dos militares, você impôs a mudança. O custo político foi alto.':'A reforma foi aprovada pelas vias legais.'} ${REGIMES[key].desc}`});
+}
+function applyRegime(key){
+  S.regime=key;S.lastElection=S.year;S.hist.push({y:S.year,r:key});
+  if(key==='ditadura'){S.mil+=8;S.pop-=6;S.decrees=0}
+  if(key==='parlamentarismo'){S.pop+=5;S.elite-=3}
+  if(key==='monarquia'){S.monarch={age:rnd(35,55)|0,q:rnd(30,80)|0};S.elite+=8}
+  if(key==='aristocracia'){S.elite+=10;S.pop-=5}
+  clampAll();autoCoalition();
+}
+function setVal(k,v){S[k]=+v;if(k==='tariff'||k==='mining')trade()}
+// ===== Fim de ano =====
+const elecYears=()=>R().elec?(S.term||R().elec):0;
+function endYear(){
+  if(S.over||S.modals.length)return;
+  const prev={pib:S.pib,pop:S.pop,debt:S.debt,treasury:S.treasury,unemp:S.unemp,infl:S.infl,tot:demStats().tot};
+  S.bills.filter(b=>b.status==='pend'||b.status==='aprovado').forEach(b=>{addLog(`"${lawOf(b.id).nome}" caducou sem decisão.`)});
+  trade();const stk=tradeYear();
+  const priv=S.companies.filter(c=>c.priv).length;
+  const rat={};CATS.forEach(c=>rat[c.k]=ratioOf(c.k));
+  const profits=S.companies.filter(c=>!c.priv).reduce((a,c)=>a+c.lucro,0)*.35*(1+S.idx.infra/200);
+  const miningRev=S.mining*S.reserves/100*1.5;
+  const taxRev=taxCalc().netBi, tarRev=0, roy=miningRev*S.royalty;
+  const rev=taxRev+tarRev+roy+profits;
+  const rate=.05+Math.max(0,S.debt/S.pib-.8)*.08+Math.max(0,S.infl-6)*.004+credPrem()+(S.selic-SELIC0)*.005;
+  const interest=S.debt*rate;
+  const spend=S.pib*primaryPct()/100+interest+stk.cost+fedCost();
+  const balance=rev-spend;
+  S.treasury+=balance;
+  if(S.treasury<0){S.debt+=-S.treasury;S.treasury=0;if(S.debt/S.pib>1)S.infl+=.8}else S.infl-=.3;
+  S.rev=rev;S.spend=spend;S.balance=balance;S.interest=interest;S.rates=rate;
+  Object.keys(S.floors).forEach(k=>{if(S.floors[k]>0&&S.budget[k]<S.floors[k]-.001){S.scandal+=5;S.elite-=1.5;addLog(`Piso constitucional violado: ${CATS.find(c=>c.k===k).nome}.`,'bad')}});
+  const primBiYear=S.pib*primaryPct()/100;arcEvaluate(rev,primBiYear,(rev-primBiYear)/S.pib*100);
+  updateIdx();demStep();secYear();ideoYear();groupsYear(rat);statesYear(rat);
+  const tb=(S.exp-S.imp)/S.pib*3,fx=taxFx(),bcx=bcEffects();
+  let g=2.2+(S.idx.infra-NEU)*.035+(S.idx.educ-NEU)*.03+(S.idx.maq-NEU)*.012+(S.idx.saude-NEU)*.01+(S.ind-40)*.02-fx.gpen
+    -Math.max(0,S.debt/S.pib-.9)*4-Math.max(0,S.infl-8)*.18+S.growthShock+priv*.12+tb+stk.dg+(S.mining-40)*.01*S.reserves/100+.6*(S.wfg-.4)-clamp((70-S.cred)*.008,-.2,.5)+bcx.dg+rnd(-.6,.6);
+  S.growth=clamp(g,-6,9);S.growthShock=0;S.pib*=1+S.growth/100;
+  S.ind+=(S.idx.ind-NEU)*.05+tarDev()*.06+(S.idx.infra-NEU)*.03+(S.idx.educ-NEU)*.02-.8;
+  S.regions.forEach(r=>{r.dev+=(S.idx.infra-NEU)*.03+(S.idx.educ-NEU)*.02+rnd(-.4,.4);r.ind+=(S.ind-40)*.02});
+  S.unemp+=((9+fx.unemp-S.growth*.9+(50-S.ind)*.03)-S.unemp)*.6;
+  S.infl+=(4+fx.infl+stk.infl+tarDev()*.03+(S.growth>5?.8:0)+bcx.di-S.infl)*.25;
+  S.reserves=Math.max(0,S.reserves-S.mining*.06);
+  const W={previd:4.5,saude:4,educ:2,assist:3,seg:1.5,infra:1,pessoal:1.5};let eff=0;for(const k in W)eff+=W[k]*(clamp(rat[k],0,1.4)-1);
+  const d=S.growth*1.1-(S.unemp-8)*.7-(S.infl-5)*.7-2.9+eff-S.excess*25
+    +fx.pop-S.scandal*.04-Math.max(0,S.mining-60)*.025*clamp((100-S.idx.amb)/33,.3,3);
+  S.pop+=d*.45;
+  S.elite+=fx.elite+stk.elite+priv*.1-(S.royalty-.15)*5+(50-S.elite)*.04;
+  S.mil+=(rat.def-1)*3.5+(rat.seg-1)*1.5-.4+(S.regime==='ditadura'?-.4:0);
+  S.funds+=2+S.elite*.08;
+  S.scandal*=.94;
+  S.monarch.age++;
+  S.year++;clampAll();trade();S.snap=polSnap();S.undo=[];
+  S.pibHist.push(S.pib);S.popHist.push(S.pop);
+  S.parties.forEach(p=>{if(!p.player){p.rel=clamp(p.rel-(inCoal(p)?2:3),0,100);if(inCoal(p)&&p.rel<22){S.coalition=S.coalition.filter(x=>x!==p.id);addLog(`O ${p.sigla} deixou a base aliada.`,'bad')}}});
+  const minMsgs=ministersYear(rat);
+  const st=demStats();recordSeries(rev,primBiYear);
+  const rep={kind:'rel',titulo:`Ano ${S.year-1} encerrado`,rows:[
+    ['PIB',`${f0(S.pib)} bi`,S.growth],['Saldo do governo',`${sg(balance,0)} bi`,balance],['Popularidade',`${f0(S.pop)}%`,S.pop-prev.pop],
+    ['Desemprego',`${f1(S.unemp)}%`,-(S.unemp-prev.unemp)],['Inflação',`${f1(S.infl)}%`,-(S.infl-prev.infl)],['Dívida',`${f0(S.debt)} bi`,-(S.debt-prev.debt)],
+    ['População',`${f1(st.tot)} mi`,st.tot-prev.tot],['Mortes por falta de serviços',`${f0(S.excess*1000)} mil`,-S.excess*100]]};
+  modal(rep);
+  if(minMsgs.length)modal({kind:'texto',ic:'papel',titulo:'Mudança no gabinete',txt:minMsgs.join(' ')});
+  genProblems().forEach(ev=>modal({kind:'evento',ev}));
+  // eventos
+  // escândalo
+  if(S.scandal>35&&Math.random()<(S.scandal-30)/100){
+    S.pop-=8;S.scandal*=.5;S.camp=Math.max(0,S.camp-1);clampAll();
+    addLog('Operação da Polícia Federal prendeu aliados do governo.','bad');
+    modal({kind:'texto',ic:'papel',titulo:'Operação da Polícia Federal',txt:'Mandados de busca em gabinetes e prisões de operadores do esquema. A popularidade caiu 8 pontos e o escândalo vai pesar na próxima eleição.'});
+  }
+  // eleições
+  const rg=R();
+  if(S.regime==='parlamentarismo'&&coalSeats()<51){
+    if(Math.random()<.6){S.pop-=5;addLog('Voto de desconfiança aprovado: o governo caiu.','bad');
+      modal({kind:'texto',ic:'papel',titulo:'Voto de desconfiança',txt:`Sua coalizão tinha só ${coalSeats()} cadeiras. O Parlamento derrubou o governo e convocou eleição imediata.`});
+      election(true)}
+    else addLog(`Sua coalizão tem apenas ${coalSeats()} cadeiras. Corre risco de voto de desconfiança.`,'bad');
+  }
+  
