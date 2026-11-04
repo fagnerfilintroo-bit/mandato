@@ -549,4 +549,417 @@ function endYear(){
       election(true)}
     else addLog(`Sua coalizão tem apenas ${coalSeats()} cadeiras. Corre risco de voto de desconfiança.`,'bad');
   }
-  
+  if(S.regime==='monarquia'&&S.monarch.age>=70&&Math.random()<(S.monarch.age-68)*.1)succession();
+  crises();
+  if(!S.over){S.pop=clamp(S.pop,0,100);drawBills();
+    if(S.year>=2046&&!S.won){S.won=true;modal({kind:'fim',titulo:'Fim de duas décadas no poder'})}}
+  clampAll();
+}
+function succession(){
+  const q=rnd(20,90)|0;const old=S.monarch.age;
+  S.monarch={age:rnd(25,45)|0,q};
+  const eff=(q-50)*.2;S.pop+=eff;S.elite+=eff;clampAll();
+  addLog(`O monarca morreu aos ${old} anos. Herdeiro de qualidade ${q}.`,q>=50?'good':'bad');
+  modal({kind:'texto',ic:'coroa',titulo:'O rei morreu. Viva o rei!',txt:`O herdeiro sobe ao trono com ${S.monarch.age} anos. ${q>=60?'É popular entre a nobreza e o povo.':q<=40?'É visto como fraco e a corte murmura.':'Assume sem grandes surpresas.'}`});
+}
+function election(early){
+  const rg=R();const prevSeats={};S.parties.forEach(p=>prevSeats[p.id]=p.seats);
+  const aris=S.regime==='aristocracia';
+  const gov=S.parties[0];const popW=popRegional();
+  const w=S.parties.map(p=>{
+    let x=14+p.seats*.3+rnd(-3,3);
+    if(p.player){x+=((aris?S.elite:popW)-50)*.35-S.scandal*.15+S.camp*3}
+    else{
+      const dist=Math.abs(p.ideo-gov.ideo)/100;
+      x+=(50-(aris?S.elite:popW))*.12*dist+(inCoal(p)?-1:1)*1.5;
+      if(aris&&p.ideo>0)x+=S.elite/10;
+    }
+    return Math.max(2,x);
+  });
+  const sum=w.reduce((a,b)=>a+b,0);
+  let seats=w.map(x=>Math.floor(x/sum*100));
+  let rest=100-seats.reduce((a,b)=>a+b,0);
+  const order=w.map((x,i)=>[x/sum*100-Math.floor(x/sum*100),i]).sort((a,b)=>b[0]-a[0]);
+  for(let i=0;rest>0;i++,rest--)seats[order[i%order.length][1]]++;
+  S.parties.forEach((p,i)=>p.seats=seats[i]);
+  S.lastElection=S.year;S.camp=0;
+  autoFixCoalition();
+  addLog(`Eleição ${aris?'das casas':''}: seu partido ficou com ${S.parties[0].seats} cadeiras.`,'e');
+  modal({kind:'eleicao',titulo:aris?'Redistribuição das casas':early?'Eleição antecipada':'Eleição geral',prev:prevSeats});
+}
+function autoFixCoalition(){
+  S.coalition=S.coalition.filter(id=>partyById(id));
+  if(!S.coalition.includes('p0'))S.coalition.unshift('p0');
+  if(coalSeats()<51){
+    const pl=S.parties[0];
+    const rest=S.parties.slice(1).filter(p=>!inCoal(p)&&p.rel>=30).sort((a,b)=>Math.abs(a.ideo-pl.ideo)-Math.abs(b.ideo-pl.ideo));
+    for(const p of rest){if(coalSeats()>=51)break;S.coalition.push(p.id)}
+  }
+}
+function crises(){
+  if(S.over)return;
+  S.lowPop=S.pop<18?S.lowPop+1:0;
+  const gameOver=(t,x)=>{S.over=true;addLog(t,'bad');modal({kind:'fim',over:true,titulo:t,txt:x})};
+  if(S.debt/S.pib>1.8)return gameOver('Calote da dívida','Credores cortaram o país do mercado. O governo caiu em meio a saques e colapso da moeda.');
+  const clima=S.grp?climaAtual():50;
+  if(S.pop<30||clima<38)S.revolta=(S.revolta||0)+Math.max(0,30-S.pop)*1.1+Math.max(0,42-clima)*.9+(S.unemp>12?4:0)+(S.infl>12?4:0);else S.revolta=Math.max(0,(S.revolta||0)-12);
+  S.revolta=clamp(S.revolta,0,140);
+  if(S.revolta>=100){
+    if(S.mil>=62&&(S.repr||0)<2){S.repr=(S.repr||0)+1;S.revolta=45;S.pop=clamp(S.pop-5,0,100);S.auth=clamp((S.auth||50)+10,0,100);ideoAct(6,'Reprimiu protestos com o Exército');S.toast='Multidões tomaram as ruas. O Exército reprimiu os protestos, com mortos e feridos. A ordem voltou, mas o custo político foi enorme.';addLog('Protestos foram reprimidos pelo Exército: a revolta cai, mas o povo não esquece.','bad');if(S.feed)postNews('Protestos reprimidos com violência: mortos e feridos em várias capitais.',-1,'Notícia')}
+    else return gameOver('A população tomou o poder','As multidões cercaram o palácio e os quartéis se recusaram a reprimir. Um governo popular provisório assumiu e convocou uma constituinte. Seu mandato acabou nas ruas.');
+  }
+  const rk=riscos();
+  if(Math.random()*100<rk.golpe*.6&&!(S.regime==='ditadura'&&S.mil>=15&&Math.random()<.5)){
+    return gameOver(S.regime==='ditadura'?'Golpe de palácio':'Golpe militar','Os generais cercaram o palácio e o Congresso de madrugada. Você foi destituído e preso, e uma junta assumiu o poder. O jogo acabou para você.');
+  }
+  if(S.regime==='ditadura'&&S.mil<15)return gameOver('Golpe de palácio','Os generais prenderam você de madrugada. Um novo ditador assume.');
+  if(S.regime==='aristocracia'&&S.elite<18)return gameOver('Deposto pelas casas','As grandes famílias retiraram seu mandato no Senado.');
+  if(S.lowPop>=3&&S.mil<35)return gameOver('Deposto pelo povo','Com as ruas tomadas e sem apoio militar, você fugiu do país.');
+  if(S.lowPop>=2&&S.regime!=='parlamentarismo'&&S.regime!=='presidencialismo'){
+    applyRegime('parlamentarismo');S.pop=35;addLog('Revolução popular derrubou o regime e instaurou o parlamentarismo.','bad');
+    modal({kind:'regime',key:'parlamentarismo',titulo:'Revolução popular',txt:'Greves, marchas e quartéis divididos forçaram uma constituinte. O país vira parlamentarista e você disputa a primeira eleição.'});election(true);return;
+  }
+  if(S.regime==='monarquia'&&S.elite<20){
+    applyRegime('aristocracia');addLog('A nobreza limitou o rei: nasce a aristocracia.','bad');
+    modal({kind:'regime',key:'aristocracia',titulo:'Revolta dos nobres',txt:'Os duques e condes se uniram, tomaram o conselho e transformaram a coroa em figura decorativa.'});
+  }
+}
+// ===== Problemas gerados pelos dados =====
+const f2=n=>(Math.round(n*100)/100).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2});
+function draftPEC(txt){S.pecDraft=txt;S.tab='cong'}
+const PROBLEMAS=[
+ {id:'arc',cond:()=>S.arc.on&&primBi()>S.spendLimit*1.005,build:()=>{const m=minOf('faz');return{ic:'moeda',t:'Fazenda: o orçamento estoura o arcabouço',
+  txt:`${m.nome} avisa que o limite de despesa deste ano é ${f0(S.spendLimit)} bi (${f2(limitPct())}% do PIB) e o orçamento prevê ${f0(primBi())} bi. Passar do limite derruba a credibilidade, encarece os juros e dá base para processo por responsabilidade fiscal.`,
+  op:[{t:'Cortar o excesso de todas as áreas, proporcionalmente',f:()=>{const fct=S.spendLimit/primBi();CATS.forEach(c=>{S.budget[c.k]=Math.round(S.budget[c.k]*fct*20)/20});S.pop-=2;S.elite+=1}},
+      {t:'Estourar o limite mesmo assim',f:()=>{}},
+      {t:'Propor PEC para revogar o arcabouço',f:()=>draftPEC('Revogar o arcabouço fiscal')}]}}},
+ {id:'previd',cond:()=>ratioOf('previd')<.93,build:()=>{const st=demStats(),n=need('previd');return{ic:'moeda',t:'Fila e atraso nas aposentadorias',
+  txt:`Os idosos (65+) já são ${f1(st.s65*100)}% da população. A previdência exigiria ${f1(n)}% do PIB, mas você paga ${f1(S.budget.previd)}%. Benefícios estão sendo cortados e atrasados.`,
+  op:[{t:`Pagar tudo (${f1(n)}% do PIB)`,f:()=>{setBudget('previd',n)}},
+      {t:'Propor PEC para elevar a idade mínima',f:()=>draftPEC('Elevar a idade mínima de aposentadoria e endurecer as regras da previdência')},
+      {t:'Deixar a fila crescer',f:()=>{S.pop-=4}}]}}},
+ {id:'saude',cond:()=>S.idx.saude<50,build:()=>({ic:'cruz',t:'Hospitais lotados',
+  txt:`O índice de saúde caiu para ${f0(S.idx.saude)}. Faltam leitos e remédios, e a mortalidade já está ${f0((mortMods()[15]-1)*100)}% acima do normal entre idosos.`,
+  op:[{t:'Verba emergencial (+0,3% do PIB na saúde)',f:()=>{setBudget('saude',S.budget.saude+.3)}},
+      {t:'Contratar organizações sociais (saúde +6, elite +3)',f:()=>{S.idx.saude+=6;S.elite+=3;S.pop-=2}},
+      {t:'Segurar os gastos',f:()=>{S.pop-=4;S.epi=1.08}}]})},
+ {id:'educ',cond:()=>S.idx.educ<50,build:()=>({ic:'livro',t:'Evasão escolar em alta',
+  txt:`A educação está com índice ${f0(S.idx.educ)}. Escolas sem professor e jovens largando os estudos pressionam desemprego e criminalidade.`,
+  op:[{t:'Reforçar a educação (+0,2% do PIB)',f:()=>{setBudget('educ',S.budget.educ+.2)}},
+      {t:'Programa de bolsa para ficar na escola (-15 bi)',f:()=>{S.treasury-=15;S.idx.educ+=5;S.pop+=2}},
+      {t:'Ignorar',f:()=>{S.pop-=3;S.unemp+=.4}}]})},
+ {id:'idoso',cond:()=>{const s=demStats().s65;return s>.125&&!(S.cool.idoso2&&s<.14)},build:()=>{const st=demStats();return{ic:'queda',t:'O país está envelhecendo',
+  txt:`Os idosos chegaram a ${f1(st.s65*100)}% da população e a idade mediana é ${f1(st.med)} anos. A taxa de fecundidade está em ${f2(tfr())} filhos por mulher. Haverá menos gente trabalhando para sustentar mais aposentados.`,
+  op:[{t:'Incentivar a natalidade (-12 bi, fecundidade +10%)',f:()=>{S.treasury-=12;S.reform.natal=Math.min(1.4,S.reform.natal+.1)}},
+      {t:'Atrair 120 mil imigrantes jovens por ano',f:()=>{S.reform.imig+=120;S.pop-=3;S.elite+=2}},
+      {t:'Esperar para ver',f:()=>{}}]}}},
+ {id:'jovem',cond:()=>S.unemp>11.5,build:()=>({ic:'punho',t:'Desemprego entre os jovens',
+  txt:`O desemprego chegou a ${f1(S.unemp)}%. Jovens sem trabalho lotam as ruas e pressionam o governo.`,
+  op:[{t:'Programa Jovem Aprendiz (-20 bi)',f:()=>{S.treasury-=20;S.unemp-=1;S.pop+=2}},
+      {t:'Cortar encargos de contratação (carga -2)',f:()=>{S.tx.folha=clamp(S.tx.folha-2,0,40);S.elite+=2}},
+      {t:'Ignorar',f:()=>{S.pop-=4;S.scandal+=3}}]})},
+ {id:'infl',cond:()=>S.infl>9,build:()=>({ic:'queda',t:'Inflação fora de controle',
+  txt:`Os preços sobem ${f1(S.infl)}% ao ano e o povo sente no mercado.`,
+  op:[{t:'Subir os juros',f:()=>{S.infl=Math.max(1,S.infl-2.2);S.growthShock-=.8;S.elite+=2}},
+      {t:'Tabelar preços',f:()=>{S.infl-=1.5;S.ind-=2;S.pop+=1;S.elite-=3}},
+      {t:'Deixar correr',f:()=>{S.pop-=3}}]})},
+ {id:'divida',cond:()=>S.debt/S.pib>.95,build:()=>({ic:'queda',t:'Agência rebaixa a nota do país',
+  txt:`A dívida chegou a ${f0(S.debt/S.pib*100)}% do PIB e o custo de rolagem sobe.`,
+  op:[{t:'Ajuste fiscal: cortar infraestrutura e servidores em 10%',f:()=>{setBudget('infra',S.budget.infra*.9);setBudget('pessoal',S.budget.pessoal*.9);S.pop-=3;S.elite+=3}},
+      {t:'Vender uma estatal',f:()=>{const c=S.companies.find(c=>!c.priv);if(c)privatizar(c.id);else S.pop-=2}},
+      {t:'Ignorar o mercado',f:()=>{S.infl+=1}}]})},
+ {id:'mortes',cond:()=>S.excess>.06,build:()=>({ic:'cruz',t:'Mortes por falta de serviços',
+  txt:`Estima-se que ${f0(S.excess*1000)} mil pessoas morreram a mais no ano por falta de saúde, renda ou segurança. Jornais cobram o governo.`,
+  op:[{t:'Plano emergencial de saúde (-30 bi, saúde +10)',f:()=>{S.treasury-=30;S.idx.saude+=10;S.pop+=2}},
+      {t:'Criticar os números',f:()=>{S.pop-=3;S.scandal+=3}}]})},
+ {id:'violencia',cond:()=>S.idx.seg<48,build:()=>({ic:'punho',t:'Onda de violência',
+  txt:`O índice de segurança caiu para ${f0(S.idx.seg)}. Homicídios entre jovens de 15 a 34 anos disparam.`,
+  op:[{t:'Reforçar a polícia (+0,1% do PIB)',f:()=>{setBudget('seg',S.budget.seg+.1)}},
+      {t:'Intervenção militar nas ruas',f:()=>{S.mil+=5;S.pop-=2;S.idx.seg+=5}},
+      {t:'Esperar',f:()=>{S.pop-=3}}]})},
+ {id:'bonus',cond:()=>{const st=demStats();return st.wa/st.tot>.69&&S.wfg>.3&&S.year<2036},build:()=>({ic:'moeda',t:'Janela do bônus demográfico',
+  txt:`Há muita gente em idade de trabalhar e poucos dependentes. Essa janela não dura para sempre.`,
+  op:[{t:'Investir em educação técnica e indústria (+0,2% em cada)',f:()=>{setBudget('educ',S.budget.educ+.2);setBudget('ind',S.budget.ind+.2);S.growthShock+=.6}},
+      {t:'Poupar o dinheiro (+25 bi)',f:()=>{S.treasury+=25}}]})},
+ {id:'greve',cond:()=>ratioOf('pessoal')<.8,build:()=>({ic:'punho',t:'Greve dos servidores',
+  txt:`Salários defasados e serviços sem gente. Escolas, hospitais e fiscais cruzam os braços.`,
+  op:[{t:'Dar reajuste (+0,2% do PIB)',f:()=>{setBudget('pessoal',S.budget.pessoal+.2)}},
+      {t:'Propor reforma administrativa (PEC)',f:()=>draftPEC('Reforma administrativa do funcionalismo público')},
+      {t:'Cortar o ponto dos grevistas',f:()=>{S.pop-=3;S.mil+=2}}]})},
+ {id:'piso',cond:()=>Object.keys(S.floors).some(k=>S.floors[k]>0&&S.budget[k]<S.floors[k]),build:()=>{const k=Object.keys(S.floors).find(k=>S.floors[k]>0&&S.budget[k]<S.floors[k]);const n=CATS.find(c=>c.k===k).nome;return{ic:'papel',t:'STF intima o governo',
+  txt:`${n} está abaixo do piso constitucional de ${f1(S.floors[k])}% do PIB. O Supremo exige que a verba volte ao mínimo.`,
+  op:[{t:'Cumprir a decisão',f:()=>{S.budget[k]=S.floors[k]}},
+      {t:'Propor PEC para revogar o piso',f:()=>draftPEC(`Revogar o piso constitucional da ${k==='saude'?'saúde':'educação'}`)},
+      {t:'Desafiar o Supremo',f:()=>{S.scandal+=10;S.elite-=3}}]}}}
+];
+function genProblems(){
+  const out=[];
+  for(const p of PROBLEMAS){
+    if(out.length>=2)break;
+    if(S.cool[p.id]&&S.year-S.cool[p.id]<4)continue;
+    let ok=false;try{ok=p.cond()}catch(e){}
+    if(ok){S.cool[p.id]=S.year;out.push(p.build())}
+  }
+  return out.concat(genRequests(3-out.length));
+}
+
+// ===== PEC: análise de texto livre =====
+const norm=s=>s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,'');
+const UPRE=/aument|elev|ampli|endurec|subir|criar|cria|instit|expand|reforc/,DOWN=/reduz|diminu|baix|cort|isen|acab|extin|revog|fim d|elimin|retir/;
+function dirOf(t){const u=t.search(UPRE),d=t.search(DOWN);if(u<0&&d<0)return 0;if(u<0)return -1;if(d<0)return 1;return u<d?1:-1}
+function analisarPEC(txt){
+  const t=norm(txt),P=[],has=r=>r.test(t),dir=dirOf(t);
+  const add=(tt,ideo,nota,ef)=>P.push({t:tt,ideo,nota,ef});
+  if(has(/aposentad|previdenc|idade minima/)){
+    const gen=has(/antecip|reduz\w* a idade|baix\w* a idade|diminu\w* a idade|ampli\w* (os )?benef|aument\w* (os )?benef/),hard=has(/elev\w* a idade|aument\w* a idade|endurec|reform/);
+    if(!gen||hard)add('Elevar a idade mínima e endurecer regras de aposentadoria',45,'Reduz a demanda da previdência em cerca de 12%. Impopular entre idosos e trabalhadores.',()=>{S.reform.prev=Math.min(.35,S.reform.prev+.12);S.pop-=6;S.elite+=4});
+    else add('Antecipar aposentadorias e ampliar benefícios',-45,'Aumenta a demanda da previdência em cerca de 10%. Popular, mas caro.',()=>{S.reform.prev=Math.max(-.25,S.reform.prev-.10);S.pop+=5;S.elite-=3});
+  }
+  if(has(/imposto|tribut|aliquota|carga/)){
+    if(has(/rico|fortuna|progressiv|lucro|dividendo/))add('Tributar grandes fortunas e lucros (imposto sobre fortunas de 0,5% e dividendos +5 pontos)',-65,'Arrecada mais e a elite reage mal.',()=>{S.tx.igf=clamp(S.tx.igf+.5,0,2);S.tx.div=clamp(S.tx.div+5,0,35);S.tx.minHigh=clamp(S.tx.minHigh+3,0,20);S.elite-=8;S.pop+=2});
+    else if(dir>0)add('Aumentar a carga tributária (+4 pontos)',-40,'Mais receita, menos crescimento e menos apoio da elite.',()=>{taxShift(4);S.pop-=2;S.elite-=6});
+    else if(dir===0)add('Reforma tributária simplificadora',10,'Sem mexer na carga total, simplifica impostos e dá um pequeno ganho de crescimento.',()=>{S.growthShock+=.4;S.elite+=2});
+    else add('Reduzir a carga tributária (-4 pontos)',50,'Menos receita, mais apoio da elite e crescimento.',()=>{taxShift(-4);S.elite+=5;S.pop+=2});
+  }
+  if(has(/teto de gasto|limite de gasto|ancora fiscal|limitar (os )?gastos/)){
+    if(has(/revog|extin|fim do teto|acabar/))add('Revogar o teto de gastos',-40,'Libera o orçamento, mas o mercado desconfia.',()=>{S.teto=0;S.elite-=3});
+    else add('Criar um teto para a despesa primária',55,'Trava os gastos federais no nível atual. Agrada o mercado, impede aumentos.',()=>{S.teto=Math.round(primaryPct()*10)/10;S.elite+=4;S.pop-=2});
+  }
+  if(has(/piso|minimo constitucional|vincula/)&&has(/saude|educa/)){
+    const k=has(/saude/)?'saude':'educ';const num=t.match(/(\d+(?:[.,]\d+)?) ?%/);
+    if(has(/revog|extin|acab|elimin|fim d/))add(`Revogar o piso constitucional da ${k==='saude'?'saúde':'educação'}`,40,'Libera cortes na área. Efeito imediato nas contas.',()=>{S.floors[k]=0;S.pop-=2});
+    else{const v=num?clamp(parseFloat(num[1].replace(',','.')),0.1,6):+(S.floors[k]||S.budget[k])+.3;
+      add(`Fixar piso de ${f1(v)}% do PIB para ${k==='saude'?'saúde':'educação'}`,-30,'Obriga governos futuros a gastar ao menos esse valor.',()=>{S.floors[k]=v;if(S.budget[k]<v)S.budget[k]=v})}
+  }else if(has(/saude|sus/)&&dir>0)add('Ampliar o SUS (+0,3% do PIB)',-35,'Aumenta a verba da saúde de imediato.',()=>setBudget('saude',S.budget.saude+.3));
+  else if(has(/educa|escola|ensino/)&&dir>0)add('Ampliar a educação (+0,2% do PIB)',-30,'Aumenta a verba da educação de imediato.',()=>setBudget('educ',S.budget.educ+.2));
+  if(has(/mandato/)&&has(/(\d+) ?anos?/)){const n=clamp(+t.match(/(\d+) ?anos?/)[1],2,8);
+    add(`Mandatos de ${n} anos`,n>4?25:-15,'Muda o intervalo entre as eleições.',()=>{S.term=n});}
+  if(has(/reeleic/)&&has(/proib|vedar|fim|acab|sem|extin/))add('Proibir a reeleição',-20,'Reduz o clima de escândalo e agrada o povo.',()=>{S.scandal=Math.max(0,S.scandal-6);S.pop+=3});
+  const alvo=has(/presidencial/)?'presidencialismo':has(/parlament/)?'parlamentarismo':has(/monarqu/)?'monarquia':has(/ditadur|regime militar|governo militar/)?'ditadura':has(/aristocr/)?'aristocracia':null;
+  if(alvo&&alvo!==S.regime&&has(/regime|adot|instit|mud|troc|convert|implant|transform|sistema|passar/))
+    add(`Mudar o regime para ${REGIMES[alvo].nome}`,{presidencialismo:0,parlamentarismo:0,monarquia:70,ditadura:90,aristocracia:80}[alvo],'Redefine as regras do poder.',()=>{applyRegime(alvo);addLog(`PEC mudou o regime para ${REGIMES[alvo].nome}.`,'e');modal({kind:'regime',key:alvo,titulo:`Novo regime: ${REGIMES[alvo].nome}`,txt:`A emenda constitucional foi promulgada. ${REGIMES[alvo].desc}`})});
+  if(has(/servidor|funcionalismo|reforma administrativa/))add('Reforma administrativa do funcionalismo',40,'Reduz a demanda de gasto com pessoal em 15%. Gera protestos.',()=>{S.reform.adm=Math.min(.3,S.reform.adm+.15);S.pop-=2;S.elite+=3});
+  [['petro','petro'],['ferro','ferrovia'],['banco','banco do povo'],['energ','energia'],['vale','vale|miner']].forEach(([id,rx])=>{
+    if(new RegExp(rx).test(t)&&has(/privatiz|vend/))add(`Privatizar a empresa (${S.companies.find(c=>c.id===id).nome})`,60,'Entra caixa agora e some o lucro futuro.',()=>privatizar(id));
+    else if(new RegExp(rx).test(t)&&has(/estatiz|nacionaliz|reestatiz/))add(`Reestatizar (${S.companies.find(c=>c.id===id).nome})`,-55,'Custa 30% a mais que o valor de venda.',()=>estatizar(id));
+  });
+  if(has(/natalid|incentiv.*filh|licenca.*(matern|patern)|auxilio.*(filh|bebe)/))add('Política de incentivo à natalidade',-10,'Aumenta a fecundidade em 10% e custa 12 bi.',()=>{S.treasury-=12;S.reform.natal=Math.min(1.4,S.reform.natal+.1);S.pop+=2});
+  if(has(/imigra/)){
+    if(has(/restring|proib|bloque|fech/))add('Restringir a imigração',55,'Zera a entrada anual de imigrantes.',()=>{S.reform.imig=0;S.pop+=1});
+    else add('Abrir a imigração (+120 mil jovens por ano)',-25,'Rejuvenesce a população e aumenta a força de trabalho.',()=>{S.reform.imig+=120;S.pop-=2});
+  }
+  if(has(/banco central|autonomia/))add('Autonomia do Banco Central',50,'Derruba a inflação e agrada o mercado.',()=>{S.infl=Math.max(1,S.infl-1.5);S.elite+=4});
+  if(has(/meio ambiente|desmat|amazon|mineracao/)&&has(/proib|limit|prote|restring|conserv/))add('Limitar a mineração e proteger biomas',-40,'Teto de 50% na extração e mais proteção ambiental.',()=>{S.mining=Math.min(S.mining,50);S.idx.amb+=8;S.ind-=1;S.pop+=2});
+  if(has(/arcabouco|regra fiscal/)){
+    if(has(/revog|extin|acab|elimin|fim d|suspen/))add('Revogar o arcabouço fiscal',-45,'Sem regra de despesa o gasto fica livre, mas o mercado perde a âncora.',()=>{S.arc.on=false;S.elite-=2;S.pop+=1});
+    else add('Instituir (ou restabelecer) o arcabouço fiscal',50,'Limita o crescimento real da despesa a 70% do da receita, entre 0,6% e 2,5% ao ano.',()=>{S.arc.on=true;S.cred=clamp(S.cred+8,0,100);S.elite+=3});
+  }
+  const ideo=P.length?P.reduce((a,p)=>a+p.ideo,0)/P.length:0;
+  return{txt,provs:P,ideo,status:'analisada',r1:null,r2:null,pec:true};
+}
+function pecBill(n){return{id:'pec'+n,ideo:S.pec.ideo,pec:true}}
+function pecNoise(){S.parties.forEach(p=>{p.noise.pec1=rnd(-9,9);p.noise.pec2=rnd(-9,9)})}
+function pecAnalyze(){
+  const txt=(S.pecDraft||'').trim();if(txt.length<8){S.toast='Descreva a PEC com pelo menos uma frase.';return}
+  if(S.pecYear===S.year){S.toast='Só dá para tramitar uma PEC por ano.';return}
+  S.pec=analisarPEC(txt);pecNoise();
+}
+function pecEnact(){
+  S.pec.provs.forEach(p=>p.ef());S.pec.status='promulgada';S.pecYear=S.year;ideoPEC(S.pec);
+  addLog(`PEC promulgada: ${S.pec.provs.map(p=>p.t).join('; ')}.`,'good');clampAll();
+}
+function pecVote(){
+  const e=S.pec;if(!e||e.status!=='analisada'||!e.provs.length||S.pecYear===S.year)return;
+  const count=n=>{let y=0;S.parties.forEach(p=>{if(score(p,pecBill(n))>=50)y+=p.seats});return y};
+  e.r1=count(1);S.pecYear=S.year;
+  if(e.r1<60){e.status='rejeitada';addLog(`PEC rejeitada na Câmara: ${e.r1} votos, eram necessários 60.`,'bad');return}
+  e.r2=count(2);
+  if(e.r2<60){e.status='rejeitada';addLog(`PEC rejeitada no Senado: ${e.r2} votos, eram necessários 60.`,'bad');return}
+  pecEnact();
+}
+function pecDecree(){
+  const e=S.pec;if(!e||e.status!=='rejeitada')return;
+  if(S.regime==='ditadura'){S.pop-=5;S.mil+=2}else if(S.regime==='monarquia'){S.elite-=8;S.pop-=2}else return;
+  pecEnact();e.status='decretada';
+}
+// ===== Secretários, arcabouço fiscal, projeção e comparação com o Brasil real =====
+const NOMES=[['Marcos Tavares','m'],['Helena Duarte','f'],['Ricardo Albuquerque','m'],['Patrícia Lemos','f'],['Otávio Brandão','m'],['Luciana Farias','f'],['Gustavo Peixoto','m'],['Renata Siqueira','f'],['Fábio Carneiro','m'],['Mônica Teixeira','f'],['Eduardo Vasconcelos','m'],['Cláudia Nogueira','f'],['Alberto Furtado','m'],['Simone Barreto','f'],['Paulo Medeiros','m'],['Vera Magalhães','f'],['Rodrigo Pontes','m'],['Telma Cavalcanti','f'],['Bruno Aragão','m'],['Sônia Valadares','f']];
+const CARGO_BASE={previd:'da Previdência',pessoal:'de Gestão e Servidores',assist:'de Assistência Social',saude:'de Saúde',educ:'de Educação',def:'de Defesa',seg:'de Segurança',infra:'de Infraestrutura',ind:'de Indústria e Ciência',amb:'do Meio Ambiente',faz:'da Fazenda'};
+const PARTIDO_INI={previd:'cd',pessoal:'cd',assist:'pta',saude:'fv',educ:'pta',def:'mon',seg:'mon',infra:'al',ind:'al',amb:'fv',faz:'al'};
+const ARCTARGET=[.25,.5,1,1];
+const cargoOf=m=>`${m.g==='f'?'Secretária':'Secretário'} ${CARGO_BASE[m.k]}`;
+function newMinister(k,party){
+  const used=(S.mins||[]).map(m=>m.nome);
+  const pool=NOMES.filter(n=>!used.includes(n[0]));const n=pick(pool.length?pool:NOMES);
+  return{k,nome:n[0],g:n[1],party,comp:rnd(45,92)|0,satisf:58,lastReq:-9};
+}
+function initCabinet(){
+  S.mins=[];Object.keys(PARTIDO_INI).forEach(k=>S.mins.push(newMinister(k,PARTIDO_INI[k])));
+  S.arc={on:true};S.cred=70;S.arcSlow=false;S.arcViol=0;
+  S.prevPrimary=S.pib*primaryPct()/100;S.revPrev=0;S.spendLimit=S.prevPrimary*1.014;
+}
+const minOf=k=>S.mins.find(m=>m.k===k);
+const effOf=k=>{const m=minOf(k);return m?.9+.2*m.comp/100:1};
+const reqPct=k=>{const m=minOf(k);return need(k)*(1+clamp((72-m.comp)/160,0,.25))};
+const credPrem=()=>clamp((70-S.cred)*.0004,-.006,.015);
+const limitPct=()=>S.spendLimit/S.pib*100;
+const primBi=()=>S.pib*primaryPct()/100;
+
+function arcEvaluate(rev,prim,resultPct){
+  const msgs=[];
+  if(S.arc.on){
+    const over=prim-S.spendLimit;
+    if(over>S.spendLimit*.005){
+      const pct=over/S.spendLimit*100;
+      S.cred=clamp(S.cred-Math.min(10,1.5+pct*2.5),0,100);S.elite-=1.5;S.scandal+=3;S.arcViol++;
+      msgs.push(`Arcabouço fiscal estourado em ${f0(over)} bi (${f1(pct)}% acima do limite). Credibilidade cai.`);
+    }else S.cred=clamp(S.cred+2,0,100);
+    const tgt=ARCTARGET[clamp(S.year-2026,0,3)];
+    if(resultPct<tgt-.25){S.cred=clamp(S.cred-3,0,100);S.arcSlow=true;msgs.push(`Meta de resultado primário (${f2(tgt)}% do PIB) descumprida: no próximo ano o limite de despesa cresce só 50% da receita.`)}
+    else if(resultPct>tgt+.25)S.arcSlow=false;
+    const rg=S.revPrev>0?(rev/S.revPrev-1)*100:2;
+    const g=clamp((S.arcSlow?.5:.7)*rg,.6,2.5);
+    S.spendLimit=prim*(1+g/100);
+  }else{
+    S.cred=clamp(S.cred+(50-S.cred)*.05,0,100);S.spendLimit=prim*1.025;
+  }
+  S.prevPrimary=prim;S.revPrev=rev;
+  msgs.forEach(t=>addLog(t,'bad'));
+}
+function ministersYear(rat){
+  const msgs=[];
+  S.mins.forEach(m=>{
+    if(m.k==='faz'){m.satisf=clamp(m.satisf+(S.cred-60)*.08-(S.arcViol>0&&S.year%1===0?0:0),0,100)}
+    else{const r=rat[m.k]??1;m.satisf=clamp(m.satisf+(clamp(r,0,1.3)-.97)*20-(m.satisf-60)*.05,0,100)}
+    const p=partyById(m.party);if(p&&!p.player)p.rel=clamp(p.rel+(m.satisf-50)*.03,0,100);
+  });
+  S.mins.forEach((m,i)=>{
+    if(m.satisf<18){
+      const old=m,np=newMinister(m.k,m.party);S.mins[i]=np;
+      const p=partyById(m.party);if(p&&!p.player)p.rel=clamp(p.rel-8,0,100);
+      S.scandal+=3;if(m.k==='faz')S.cred=clamp(S.cred-8,0,100);
+      addLog(`${cargoOf(old)} ${old.nome} pediu demissão em protesto. ${np.nome} assumiu.`,'bad');
+      msgs.push(`${cargoOf(old)} ${old.nome} saiu batendo a porta. ${np.nome}, do mesmo partido, assume a pasta.`);
+    }
+  });
+  return msgs;
+}
+function swapMinister(k,party){
+  const m=minOf(k);if(!m||party===m.party)return;
+  const po=partyById(m.party),pn=partyById(party);
+  if(po&&!po.player)po.rel=clamp(po.rel-5,0,100);
+  if(pn&&!pn.player)pn.rel=clamp(pn.rel+9,0,100);
+  const i=S.mins.indexOf(m);S.mins[i]=newMinister(k,party);
+  addLog(`${S.mins[i].nome} assumiu ${cargoOf(S.mins[i]).toLowerCase()} por indicação do ${pn.sigla}.`);
+}
+
+// ===== Projeção: "se nada mudar" =====
+let _fc=null;
+function getForecast(y=10){
+  const key=[S.year,S.reform.prev,S.reform.natal,S.reform.imig,S.reform.adm,y].join('|');
+  if(_fc&&_fc.key===key)return _fc.v;
+  const sv={m:S.dem.m.slice(),f:S.dem.f.slice(),ft:S.fertTrend,epi:S.epi,b:S.births,d:S.deaths,e:S.excess,w:S.wfg,pib:S.pib,nh:S.noHist};
+  S.noHist=true;
+  for(let i=0;i<y;i++){demStep();S.pib*=1.02}
+  const st=demStats(),needs={};CATS.forEach(c=>needs[c.k]=need(c.k));
+  S.dem.m=sv.m;S.dem.f=sv.f;S.fertTrend=sv.ft;S.epi=sv.epi;S.births=sv.b;S.deaths=sv.d;S.excess=sv.e;S.wfg=sv.w;S.pib=sv.pib;S.noHist=sv.nh;
+  const v={st,needs,year:S.year+y};_fc={key,v};return v;
+}
+
+// ===== Brasil real (referência) =====
+// IBGE Projeção da População 2024: pico de 220,4 mi em 2041, 199,2 mi em 2070; fecundidade 1,57 (2023) e 1,44 em 2040;
+// 60+: 15,6% (2023) e 37,8% (2070); expectativa de vida 76,6 (2024) e acima de 80 em 2042. Interpolação linear entre marcos.
+const interp=(pts,x)=>{if(x<=pts[0][0])return pts[0][1];for(let i=1;i<pts.length;i++){if(x<=pts[i][0]){const[a,va]=pts[i-1],[b,vb]=pts[i];return va+(vb-va)*(x-a)/(b-a)}}return pts[pts.length-1][1]};
+const brPop=y=>interp([[2022,203.1],[2041,220.4],[2070,199.2]],y);
+const brS60=y=>interp([[2023,15.6],[2070,37.8]],y);
+const brTfr=y=>interp([[2023,1.57],[2040,1.44]],y);
+const brE0=y=>interp([[2024,76.6],[2042,80]],y);
+// ===== Gabinete, comparação com o Brasil e projeção =====
+const IC={previd:'moeda',pessoal:'papel',assist:'moeda',saude:'cruz',educ:'livro',def:'punho',seg:'punho',infra:'queda',ind:'moeda',amb:'sol'};
+function genRequests(n){
+  if(n<=0)return [];
+  const c=[];
+  CATS.forEach(cat=>{const m=minOf(cat.k);if(!m||S.year-m.lastReq<3)return;
+    const req=reqPct(cat.k),gap=req-S.budget[cat.k],nd=need(cat.k);
+    if(gap>.06*nd&&gap*S.pib/100>4)c.push({m,cat,req,gap,urg:gap/nd})});
+  c.sort((a,b)=>b.urg-a.urg);
+  return c.slice(0,n).map(buildRequest);
+}
+function buildRequest({m,cat,req,gap}){
+  const k=cat.k,nd=need(k),fc=getForecast(10),b0=S.budget[k],bi=gap*S.pib/100;
+  const done=fn=>()=>{m.lastReq=S.year;fn()};
+  const donor=CATS.filter(d=>['infra','ind','def','seg','amb','pessoal'].includes(d.k)&&d.k!==k&&S.budget[d.k]>=gap+.1).sort((a,b)=>S.budget[b.k]-S.budget[a.k])[0];
+  const over=Math.max(0,primBi()+bi-S.spendLimit);
+  const op=[
+    {t:`Atender o pedido (+${f0(bi)} bi${S.arc.on&&over>0?`, estoura o arcabouço em ${f0(over)} bi`:''})`,f:done(()=>{setBudget(k,req);m.satisf=clamp(m.satisf+10,0,100)})},
+    {t:`Meio-termo (+${f0(bi/2)} bi)`,f:done(()=>{setBudget(k,b0+gap/2);m.satisf=clamp(m.satisf+2,0,100)})}];
+  if(donor)op.push({t:`Remanejar de ${donor.nome} (gasto total igual)`,f:done(()=>{
+    setBudget(k,req);S.budget[donor.k]=Math.max(0,Math.round((S.budget[donor.k]-gap)*20)/20);m.satisf=clamp(m.satisf+8,0,100);
+    const dm=minOf(donor.k);if(dm){dm.satisf=clamp(dm.satisf-9,0,100);const p=partyById(dm.party);if(p&&!p.player)p.rel=clamp(p.rel-3,0,100)}})});
+  op.push({t:'Negar o pedido',f:done(()=>{m.satisf=clamp(m.satisf-12,0,100);const p=partyById(m.party);if(p&&!p.player)p.rel=clamp(p.rel-4,0,100)})});
+  return{ic:IC[k],t:`${cargoOf(m)} pede reforço`,
+    txt:`${m.nome} (${partyById(m.party).sigla}) apresenta um estudo técnico: hoje a pasta exigiria ${f2(nd)}% do PIB e você paga ${f2(b0)}%. Se nada mudar, em ${fc.year} serão ${f2(fc.needs[k])}%. O pedido é de ${f2(req)}% do PIB (+${f0(bi)} bi por ano).${m.comp<60?' Os números dele costumam vir inflados.':''}`,op};
+}
+function cmpChart(a,b,ca){
+  const w=300,h=64,all=a.concat(b),mn=Math.min(...all),mx=Math.max(...all),rg=(mx-mn)||1,n=Math.max(a.length,2);
+  const pt=(arr)=>arr.map((v,i)=>`${i/(n-1)*(w-8)+4},${h-4-((v-mn)/rg)*(h-8)}`).join(' ');
+  const la=a[a.length-1];
+  return `<svg viewBox="0 0 ${w} ${h}" width="100%" height="${h}" preserveAspectRatio="none" aria-hidden="true"><polyline points="${pt(b)}" fill="none" stroke="#e9f0ec" stroke-width="1.5" stroke-dasharray="4 3"/><polyline points="${pt(a)}" fill="none" stroke="${ca}" stroke-width="2.2"/></svg>`;
+}
+function povoCompare(){
+  const n=S.demHist.length;const yrs=[...Array(n)].map((_,i)=>S.year-(n-1)+i);
+  const bp=yrs.map(brPop),b60=yrs.map(brS60);
+  return `<h2>Aurora × Brasil real</h2>
+  <div class="panel"><p class="small mute" style="margin:0">População (milhões). Linha cheia: Aurora. Tracejada: Brasil, projeção do IBGE.</p>${cmpChart(S.demHist,bp,'#4f9bc9')}
+  <p class="small mute" style="margin:8px 0 0">Idosos de 60 anos ou mais (% da população)</p>${cmpChart(S.s60Hist,b60,'#e3ab3c')}
+  <p class="small mute" style="margin:8px 0 0">Referência do Brasil: pico de 220,4 mi em 2041 e 60+ de 15,6% (2023) para 37,8% (2070), com linha reta entre os marcos do IBGE.</p></div>`;
+}
+function povoFlow(){
+  const st=demStats(),fc=getForecast(10);
+  return `<h2>Fluxo do ano e projeção</h2><div class="panel small">
+   <p><b class="up">+${f0(S.births*1000)} mil</b> nasceram · <b class="dn">-${f0(S.deaths*1000)} mil</b> morreram${S.reform.imig?` · <b class="up">+${f0(S.reform.imig)} mil</b> imigrantes`:''}. Quem tinha 4 anos passou para o grupo seguinte e os de 64 viraram idosos.</p>
+   <p>Se nada mudar, em <b>${fc.year}</b> Aurora terá <b>${f1(fc.st.tot)} mi</b> de habitantes, <b>${f1(fc.st.s65*100)}%</b> com 65 anos ou mais e idade mediana de ${f1(fc.st.med)}. A previdência passará a exigir <b>${f2(fc.needs.previd)}%</b> do PIB (hoje ${f2(need('previd'))}%) e a saúde <b>${f2(fc.needs.saude)}%</b> (hoje ${f2(need('saude'))}%), e a educação cairá para ${f2(fc.needs.educ)}%.</p></div>`;
+}
+function viewGab(){
+  const p=project(),prim=primaryPct(),jur=p.interest/S.pib*100,resto=Math.max(0,100-prim-jur);
+  const pv=privBase(),segs=CATS.map(c=>({n:c.nome,v:S.budget[c.k],c:c.cor})).concat([{n:'Juros reais da dívida',v:jur,c:'#6b7580'}]).concat(SECT.map(s=>({n:s.n+' (privado)',v:resto*S.sec[s.k]/pv,c:s.c})));
+  const resultado=(p.rev-p.spend)/S.pib*100,prima=(p.rev-primBi())/S.pib*100;
+  const faz=minOf('faz'),over=primBi()-S.spendLimit,tgt=ARCTARGET[clamp(S.year-2026,0,3)];
+  const st=demStats();
+  const rows=[['Despesa primária da União','18,8% do PIB (2025)',f2(prim)+'%'],['Receita líquida','18,3% do PIB (2025)',f2(p.rev/S.pib*100)+'%'],['Resultado primário','-0,48% do PIB (2025)',(prima>=0?'+':'')+f2(prima)+'%'],
+    ['Dívida bruta','78,7% do PIB (dez/2025)',f0(S.debt/S.pib*100)+'%'],[`População em ${S.year}`,f1(brPop(S.year))+' mi',f1(st.tot)+' mi'],['Idosos de 60+',f1(brS60(S.year))+'%',f1(grp(12,17)/st.tot*100)+'%'],
+    ['Fecundidade',f2(brTfr(S.year)),f2(tfr())],['Expectativa de vida',f1(brE0(S.year))+' anos',f1(st.e0)+' anos']];
+  return `<h2>Gabinete e orçamento</h2>
+  <p class="small mute">Cada área tem um secretário, de um partido, que estuda a demanda e pede verba. O que sobra do PIB, depois do governo e dos juros, fica com o setor privado, repartido entre os setores reais do IBGE (veja a aba Economia). Tudo em valores reais.</p>
+  <div class="seats" style="height:30px">${segs.map(s=>`<div style="width:${s.v}%;background:${s.c}" title="${s.n}: ${f2(s.v)}%"></div>`).join('')}</div>
+  <div class="grid2 small" style="margin:6px 0">${segs.map(s=>`<div class="row" style="gap:6px;flex-wrap:nowrap"><span style="width:10px;height:10px;background:${s.c};border-radius:2px;flex:none"></span><span class="mute" style="flex:1">${s.n}</span><b class="mono">${f2(s.v)}%</b></div>`).join('')}</div>
+  <div class="panel hi"><div class="grid2 mono small">
+    <div>Despesa primária<br><b style="font-size:17px">${f2(prim)}%</b></div><div>Juros reais<br><b style="font-size:17px">${f2(jur)}%</b></div>
+    <div>Receita<br><b style="font-size:17px">${f2(p.rev/S.pib*100)}%</b></div><div>Resultado nominal<br><b class="${resultado>=0?'up':'dn'}" style="font-size:17px">${resultado>=0?'+':''}${f2(resultado)}%</b></div></div>
+   ${S.teto?`<p class="small" style="margin:8px 0 0"><span class="chip y">Teto de gastos: ${f1(S.teto)}% do PIB</span></p>`:''}
+   ${undoBar()}</div>
+  <h2>Arcabouço fiscal</h2>
+  <div class="panel ${S.arc.on&&over>S.spendLimit*.005?'hi':''}"><div class="row" style="justify-content:space-between"><b>${cargoOf(faz)} ${faz.nome}</b><span class="chip ${S.arc.on?'g':'r'}">${S.arc.on?'Em vigor':'Revogado'}</span></div>
+   ${meter('Confiança dele',faz.satisf,faz.satisf<35?'r':'g')}
+   <p class="small mute">Regra inspirada na brasileira: a despesa real só pode crescer 70% do crescimento da receita, entre 0,6% e 2,5% ao ano, e o resultado primário tem meta. Mantendo a despesa como % do PIB, ela cresce mais que o limite com o tempo. Só uma PEC revoga a regra.</p>
+   <div class="grid2 mono small"><div>Limite de despesa<br><b style="font-size:16px">${f0(S.spendLimit)} bi</b> (${f2(limitPct())}% do PIB)</div><div>Orçamento atual<br><b class="${S.arc.on&&over>S.spendLimit*.005?'dn':'up'}" style="font-size:16px">${f0(primBi())} bi</b> (${over>0?'+':''}${f0(over)} bi)</div>
+    <div>Meta primária ${S.year}<br><b style="font-size:16px">${f2(tgt)}%</b></div><div>Previsto<br><b class="${prima>=tgt-.25?'up':'dn'}" style="font-size:16px">${prima>=0?'+':''}${f2(prima)}%</b></div></div>
+   ${meter('Credibilidade do país',S.cred,S.cred<45?'r':'g')}
+   <p class="small mute" style="margin:0">Juros ${S.cred<70?'+':''}${f2((70-S.cred)*.04)} ponto percentual por causa da credibilidade.${S.arcSlow?' Limite reduzido a 50% da receita por descumprir a meta.':''}</p></div>
+  <h2>Secretários</h2>
+  ${CATS.map(c=>{const m=minOf(c.k),v=S.budget[c.k],n=need(c.k),r=ratioOf(c.k),rq=reqPct(c.k),fl=S.floors[c.k],ix=c.idx?S.idx[c.idx]:null,fc=getForecast(10),pa=partyById(m.party);
+   return `<div class="panel"><div class="party">${badge(pa,34)}<div><b>${m.nome}</b><div class="small mute">${cargoOf(m)} · ${pa.sigla} · competência ${m.comp}</div>${meter('Satisfação',m.satisf,m.satisf<30?'r':'g')}</div></div>
+   <div class="row" style="justify-content:space-between;margin-top:8px"><b>${c.nome}</b><b class="mono" data-out>${f2(v)}% do PIB</b></div>
+   <input type="range" min="0" max="${c.max}" step="0.05" value="${v}" data-range="bud:${c.k}" aria-label="${c.nome}">
+   <div class="small mono mute">${f0(v*S.pib/100)} bi · estudo técnico ${f2(n)}% · pedido dele ${f2(rq)}% · em ${fc.year}: ${f2(fc.needs[c.k])}%</div>
+   <div class="row" style="margin:6px 0">${ratioChip(r)}${fl?`<span class="chip ${v<fl?'r':''}">Piso constitucional ${f1(fl)}%</span>`:''}</div>
+   ${ix!==null?meter('Qualidade do serviço',ix,ix<45?'r':'g'):''}
+   <p class="small mute" style="margin:4px 0">${c.real}</p>
+   ${r<.9?`<p class="small dn" style="margin:4px 0">${c.corte}</p>`:''}
+   <div class="row"><button data-act="budNeed" data-arg="${c.k}">Seguir o estudo técnico</button><button class="bad" data-act="budZero" data-arg="${c.k}">Zerar</button>
+   <select data-sel="swap:${c.k}" aria-label="Trocar secretário por indicação de partido"><option value="">Trocar secretário</option>${S.parties.filter(q=>q.id!==m.party).map(q=>`<option value="${q.id}">Indicação do ${q.sigla}</option>`).join('')}</select></div></div>`}).join('')}
+  <h2>Brasil real × Aurora</h2>
+  <div class="panel small"><div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse"><thead><tr class="mute" style="text-align:left"><th style="padding:4px 6px 4px 0"></th><th style="padding:4px 6px">Brasil</th><th style="padding:4px 0 4px 6px">Aurora</th></tr></thead><tbody>
+   ${rows.map(([a,b,c])=>`<tr style="border-top:1px solid var(--line)"><td style="padding:6px 6px 6px 0">${a}</td><td class="mono" style="padding:6px">${b}</td><td class="mono" style="padding:6px 0 6px 6px;color:var(--gold)">${c}</td></tr>`).join('')}</tbody></table></div>
+   <p class="mute" style="margin:8px 0 0">Fontes: Tesouro Nacional (2025), Banco Central (dívida), IBGE (Censo 2022 e Projeção 2024). Projeções do IBGE em linha reta entre os marcos publicados. Saúde, educação, defesa e Bolsa Família são aproximações.</p></div>`;
+}
